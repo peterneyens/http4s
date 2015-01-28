@@ -4,6 +4,7 @@ package jetty
 import com.codahale.metrics.MetricRegistry
 import com.codahale.metrics.servlets.MetricsServlet
 import org.http4s.server.jetty.JettyBuilder
+import org.http4s.server.middleware.Metrics
 
 /// code_ref: jetty_example
 object JettyExample extends App {
@@ -12,7 +13,7 @@ object JettyExample extends App {
   JettyBuilder
     .bindHttp(8080)
     .withMetricRegistry(metrics)
-    .mountService(ExampleService.service, "/http4s")
+    .mountService(Metrics.timer(metrics, "middleware")(ExampleService.service), "/http4s")
     .mountServlet(new MetricsServlet(metrics), "/metrics/*")
     .run
     .awaitShutdown()

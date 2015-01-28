@@ -2,6 +2,7 @@ package org.http4s.servlet.syntax
 
 import javax.servlet.{ServletRegistration, ServletContext}
 
+import com.codahale.metrics.MetricRegistry
 import org.http4s.server.{AsyncTimeoutSupport, HttpService}
 import org.http4s.servlet.{NonBlockingServletIo, Http4sServlet}
 
@@ -22,7 +23,8 @@ final class ServletContextOps private[syntax](val self: ServletContext) extends 
       service = service,
       asyncTimeout = AsyncTimeoutSupport.DefaultAsyncTimeout,
       threadPool = Strategy.DefaultExecutorService,
-      servletIo = NonBlockingServletIo(4096)
+      servletIo = NonBlockingServletIo(4096),
+      metricRegistry = new MetricRegistry
     )
     val reg = self.addServlet(name, servlet)
     reg.setLoadOnStartup(1)

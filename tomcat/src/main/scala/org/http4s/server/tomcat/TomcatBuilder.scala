@@ -76,7 +76,8 @@ sealed class TomcatBuilder private (
         service = service,
         asyncTimeout = builder.asyncTimeout,
         servletIo = builder.servletIo,
-        threadPool = builder.instrumentedServiceExecutor
+        threadPool = builder.instrumentedServiceExecutor,
+        metricRegistry = metricRegistry.get
       )
       val wrapper = tomcat.addServlet("", s"servlet-$index", servlet)
       wrapper.addMapping(s"$prefix/*")

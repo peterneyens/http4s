@@ -76,7 +76,8 @@ sealed class JettyBuilder private (
         service = service,
         asyncTimeout = builder.asyncTimeout,
         servletIo = builder.servletIo,
-        threadPool = builder.instrumentedServiceExecutor
+        threadPool = builder.instrumentedServiceExecutor,
+        metricRegistry = metricRegistry.get
       )
       val servletName = s"servlet-$index"
       val urlMapping = s"$prefix/*"

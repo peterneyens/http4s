@@ -1,7 +1,8 @@
 package org.http4s
 package servlet
 
-import java.util.concurrent.ExecutorService
+import java.util.concurrent.{TimeUnit, ExecutorService}
+import com.codahale.metrics.MetricRegistry
 import org.http4s.headers.`Transfer-Encoding`
 import server._
 
@@ -20,7 +21,8 @@ import org.log4s.getLogger
 class Http4sServlet(service: HttpService,
                     asyncTimeout: Duration = Duration.Inf,
                     threadPool: ExecutorService = Strategy.DefaultExecutorService,
-                    private[this] var servletIo: ServletIo = NonBlockingServletIo(4096))
+                    private[this] var servletIo: ServletIo = NonBlockingServletIo(4096),
+                    metricRegistry: MetricRegistry)
   extends HttpServlet
 {
   private[this] val logger = getLogger
@@ -28,6 +30,10 @@ class Http4sServlet(service: HttpService,
   private val asyncTimeoutMillis = if (asyncTimeout.isFinite()) asyncTimeout.toMillis else -1 // -1 == Inf
 
   private[this] var serverSoftware: ServerSoftware = _
+
+  private[this] val jettyUntilInvoke = metricRegistry.timer("jetty-until-invoke")
+  private[this] val jettyBefore = metricRegistry.timer("jetty-before-close")
+  private[this] val jettyAfter = metricRegistry.timer("jetty-after-close")
 
   override def init(config: ServletConfig) {
     val servletContext = config.getServletContext
@@ -60,7 +66,11 @@ class Http4sServlet(service: HttpService,
         onParseFailure(_, servletResponse, bodyWriter),
         handleRequest(ctx, _, bodyWriter)
       ).runAsync {
-        case \/-(()) => ctx.complete()
+        case \/-(()) =>
+          val request = servletRequest.asInstanceOf[org.eclipse.jetty.server.Request]
+          jettyBefore.update(System.currentTimeMillis - request.getTimeStamp, TimeUnit.MILLISECONDS)
+          ctx.complete()
+          jettyAfter.update(System.currentTimeMillis - request.getTimeStamp, TimeUnit.MILLISECONDS)
         case -\/(t) => throw t
       }
     }
@@ -77,7 +87,11 @@ class Http4sServlet(service: HttpService,
                             request: Request,
                             bodyWriter: BodyWriter): Task[Unit] = {
     ctx.addListener(new AsyncTimeoutHandler(request, bodyWriter))
-    val response = Task.fork(service.or(request, Response.notFound(request)))(threadPool)
+    val response = Task.fork {
+      val r = ctx.getRequest.asInstanceOf[org.eclipse.jetty.server.Request]
+      jettyUntilInvoke.update(System.currentTimeMillis - r.getTimeStamp, TimeUnit.MILLISECONDS)
+      service.or(request, Response.notFound(request))
+    }(threadPool)
     val servletResponse = ctx.getResponse.asInstanceOf[HttpServletResponse]
     renderResponse(response, servletResponse, bodyWriter)
   }
