@@ -7,7 +7,7 @@ publishArtifact := false
 fork := true
 
 libraryDependencies ++= Seq(
-  "com.codahale.metrics" % "metrics-json" % "3.0.2"
+  "io.dropwizard.metrics" % "metrics-json" % "3.1.0"
 )
 
 seq(Revolver.settings: _*)

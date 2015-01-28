@@ -9,13 +9,16 @@ import org.http4s.server.{Service, HttpService}
 
 import scalaz.{\/, -\/, \/-}
 import scalaz.concurrent.Task
+import scalaz.stream.Process.halt
 
 object Metrics {
 
   def timer(m: MetricRegistry, name: String)(srvc: HttpService): HttpService = {
 
-    val serviceFailure = m.timer(name + ".service-error")
-    val activeRequests = m.counter(name + ".active-requests")
+    val active_requests = m.counter(name + ".active-requests")
+
+    val service_failure = m.timer(name + ".service-error")
+    val headers_times = m.timer(name + ".headers-times")
 
     val resp1xx = m.timer(name + ".1xx-responses")
     val resp2xx = m.timer(name + ".2xx-responses")
@@ -41,12 +44,8 @@ object Metrics {
     val other_req = m.timer(name + ".other-requests")
     val total_req = m.timer(name + ".requests")
 
-    def onFinish(method: Method, start: Long, r: Throwable\/Option[Response]): Unit = {
-      activeRequests.dec()
-      val elapsed = System.nanoTime() - start
 
-      total_req.update(elapsed, TimeUnit.NANOSECONDS)
-
+    def generalMetrics(method: Method, elapsed: Long): Unit = {
       method match {
         case Method.GET     => get_req.update(elapsed, TimeUnit.NANOSECONDS)
         case Method.POST    => post_req.update(elapsed, TimeUnit.NANOSECONDS)
@@ -60,27 +59,49 @@ object Metrics {
         case _              => other_req.update(elapsed, TimeUnit.NANOSECONDS)
       }
 
+      total_req.update(elapsed, TimeUnit.NANOSECONDS)
+      active_requests.dec()
+    }
+
+    def onFinish(method: Method, start: Long)(r: Throwable\/Option[Response]): Throwable\/Option[Response] = {
+      val elapsed = System.nanoTime() - start
+
       r match {
-        case -\/(_)       =>
-          resp5xx.update(elapsed, TimeUnit.NANOSECONDS)
-          serviceFailure.update(elapsed, TimeUnit.NANOSECONDS)
-
         case \/-(Some(r)) =>
+          headers_times.update(System.nanoTime() - start, TimeUnit.NANOSECONDS)
           val code = r.status.code
-          if (code < 200)      resp1xx.update(elapsed, TimeUnit.NANOSECONDS)
-          else if (code < 300) resp2xx.update(elapsed, TimeUnit.NANOSECONDS)
-          else if (code < 400) resp3xx.update(elapsed, TimeUnit.NANOSECONDS)
-          else if (code < 500) resp4xx.update(elapsed, TimeUnit.NANOSECONDS)
-          else                 resp5xx.update(elapsed, TimeUnit.NANOSECONDS)
+          val body = r.body.onComplete {
+            val elapsed = System.nanoTime() - start
 
-        case \/-(None)    =>   resp4xx.update(elapsed, TimeUnit.NANOSECONDS)
+            generalMetrics(method, elapsed)
+
+            if (code < 200) resp1xx.update(elapsed, TimeUnit.NANOSECONDS)
+            else if (code < 300) resp2xx.update(elapsed, TimeUnit.NANOSECONDS)
+            else if (code < 400) resp3xx.update(elapsed, TimeUnit.NANOSECONDS)
+            else if (code < 500) resp4xx.update(elapsed, TimeUnit.NANOSECONDS)
+            else resp5xx.update(elapsed, TimeUnit.NANOSECONDS)
+            halt
+          }
+
+          \/-(Some(r.copy(body = body)))
+
+        case r@ \/-(None)    =>
+          generalMetrics(method, elapsed)
+          resp4xx.update(elapsed, TimeUnit.NANOSECONDS)
+          r
+
+        case e@ -\/(_)       =>
+          generalMetrics(method, elapsed)
+          resp5xx.update(elapsed, TimeUnit.NANOSECONDS)
+          service_failure.update(elapsed, TimeUnit.NANOSECONDS)
+          e
       }
     }
 
     def go(req: Request): Task[Option[Response]] = {
       val now = System.nanoTime()
-      activeRequests.inc()
-      new Task(srvc.run(req).get.map { r => onFinish(req.method, now, r); r })
+      active_requests.inc()
+      new Task(srvc.run(req).get.map(onFinish(req.method, now)))
     }
 
     Service.lift(go)
