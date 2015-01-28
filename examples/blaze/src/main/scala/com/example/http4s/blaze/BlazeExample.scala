@@ -16,8 +16,6 @@ import com.codahale.metrics._
 import com.codahale.metrics.json.MetricsModule
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.ObjectWriter
-import com.fasterxml.jackson.databind.util.JSONPObject
 
 object BlazeExample extends App {
 
@@ -33,7 +31,7 @@ object BlazeExample extends App {
       Ok(writer.writeValueAsString(metrics))
   }
 
-  val srvc = Metrics.timer(metrics, "Sample")(ExampleService.service) orElse metricsPage
+  val srvc = Metrics.timer(metrics, "Sample")(ExampleService.service orElse metricsPage)
 
   BlazeBuilder.bindHttp(8080)
     .mountService(srvc, "/http4s")
