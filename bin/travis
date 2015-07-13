@@ -10,7 +10,7 @@ fi
 
 if [[ $TRAVIS_BRANCH = "master" || $TRAVIS_BRANCH = "release-"* ]] && [[ $TRAVIS_PULL_REQUEST = "false" ]]; then
   echo -e "Host github.com\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
-  SBT_COMMAND="$SBT_COMMAND ;publish"
+  SBT_COMMAND="$SBT_COMMAND"
   if [[ $SBT_COMMAND == *"makeSite"* ]]; then
     export GIT_AUTHOR_NAME="Travis CI"
     export GIT_AUTHOR_EMAIL="travis-ci@http4s.org"
