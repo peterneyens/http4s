@@ -25,8 +25,6 @@ import scala.concurrent.duration._
   import scalaz.stream.async.unboundedQueue
   import scalaz.stream.{Process, Sink}
 
-/// code_ref: blaze_websocket_example
-
   val route = HttpService {
     case GET -> Root / "hello" =>
       Ok("Hello world.")
@@ -47,8 +45,6 @@ import scala.concurrent.duration._
 
       WS(Exchange(src, q.enqueue))
   }
-
-/// end_code_ref
 
   def pipebuilder(conn: SocketConnection): LeafBuilder[ByteBuffer] =
     new Http1ServerStage(URITranslation.translateRoot("/http4s")(route), Some(conn)) with WebSocketSupport

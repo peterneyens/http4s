@@ -5,7 +5,6 @@ object ClientExample {
 
   def getSite() = {
 
-/// code_ref: blaze_client_example
     import org.http4s.Http4s._
     import scalaz.concurrent.Task
 
@@ -40,7 +39,6 @@ object ClientExample {
     }
 
     println(page2.run)
-/// end_code_ref
   }
 
   def main(args: Array[String]): Unit = getSite()

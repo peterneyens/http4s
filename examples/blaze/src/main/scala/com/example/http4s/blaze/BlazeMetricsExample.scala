@@ -1,7 +1,5 @@
 package com.example.http4s.blaze
 
-/// code_ref: blaze_server_example
-
 import java.util.concurrent.TimeUnit
 
 import com.example.http4s.ExampleService
@@ -36,4 +34,3 @@ object BlazeMetricsExample extends App {
     .run
     .awaitShutdown()
 }
-/// end_code_ref

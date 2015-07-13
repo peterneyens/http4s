@@ -5,7 +5,6 @@ import com.codahale.metrics.MetricRegistry
 import com.codahale.metrics.servlets.MetricsServlet
 import org.http4s.server.jetty.JettyBuilder
 
-/// code_ref: jetty_example
 object JettyExample extends App {
   val metrics = new MetricRegistry
 
@@ -17,4 +16,3 @@ object JettyExample extends App {
     .run
     .awaitShutdown()
 }
-/// end_code_ref

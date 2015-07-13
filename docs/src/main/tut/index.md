@@ -3,6 +3,14 @@ layout: default
 title: http4s
 ---
 
+```tut:invisible
+import scalaz.concurrent.Task
+import scalaz.stream.Process
+import org.http4s._
+import org.http4s.dsl._
+import org.http4s.server._
+```
+
 http4s is a minimal, idiomatic Scala interface for HTTP.  http4s is Scala's answer to Ruby's 
 Rack, Python's WSGI, Haskell's WAI, and Java's Servlets.
 
@@ -37,13 +45,13 @@ Any http4s response can be streamed from an asynchronous source. http4s offers a
 of helpers to help you get your data out the door in the fastest way possible without
 tying up too many threads.
 
-```scala
+```tut:silent
 // Make your model safe and streaming by using a scalaz-stream Process
 def getData(req: Request): Process[Task, String] = ???
 
 val service = HttpService {
   // Wire your data into your service
-  case GET -> Root / "streaming" => Ok(getData(req))
+  case req @ GET -> Root / "streaming" => Ok(getData(req))
 
   // You can use helpers to send any type of data with an available EntityEncoder[T]
   case GET -> Root / "synchronous" => Ok("This is good to go right now.")
@@ -52,7 +60,40 @@ val service = HttpService {
 
 http4s is a forward-looking technology.  HTTP/2.0 and WebSockets will play a central role.
 
-{%code_ref ../../../examples/blaze/src/main/scala/com/example/http4s/blaze/BlazeWebSocketExample.scala blaze_websocket_example %}
+```tut:silent
+import org.http4s.server._
+import org.http4s.server.blaze._
+import org.http4s.websocket.WebsocketBits._
+import org.http4s.server.websocket._
+
+import scala.concurrent.duration._
+
+import scalaz.concurrent.Strategy
+import scalaz.stream._
+import scalaz.stream.async.unboundedQueue
+import scalaz.stream.time.awakeEvery
+
+val route = HttpService {
+  case GET -> Root / "hello" =>
+    Ok("Hello world.")
+
+  case req @ GET -> Root / "ws" =>
+    val src = awakeEvery(1.seconds)(Strategy.DefaultStrategy, DefaultScheduler).map{ d => Text(s"Ping! $d") }
+    val sink: Sink[Task, WebSocketFrame] = Process.constant {
+      case Text(t, _) => Task.delay( println(t))
+      case f       => Task.delay(println(s"Unknown type: $f"))
+    }
+    WS(Exchange(src, sink))
+
+  case req@ GET -> Root / "wsecho" =>
+    val q = unboundedQueue[WebSocketFrame]
+    val src = q.dequeue.collect {
+      case Text(msg, _) => Text("You sent the server: " + msg)
+    }
+
+    WS(Exchange(src, q.enqueue))
+  }
+```
 
 ## Choose your backend
 
@@ -62,7 +103,16 @@ needs now, and easily port if and when your needs change.
 
 [blaze](http://github.com/http4s/blaze) is an NIO framework.  Run http4s on blaze for maximum throughput.
 
-{%code_ref ../../../examples/blaze/src/main/scala/com/example/http4s/blaze/BlazeExample.scala blaze_server_example %}
+```tut:silent
+import org.http4s.server.blaze.BlazeBuilder
+
+object BlazeExample extends App {
+  BlazeBuilder.bindHttp(8080)
+    .mountService(service, "/http4s")
+    .run
+    .awaitShutdown()
+}
+```
 
 ### Servlets
 
@@ -71,13 +121,48 @@ on your existing infrastructure, and take full advantage of the mature JVM ecosy
 http4s can run in a .war on any Servlet 3.0+ container, and comes with convenient builders
 for embedded Tomcat and Jetty containers.
 
-{%code_ref ../../../examples/jetty/src/main/scala/com/example/http4s/jetty/JettyExample.scala jetty_example %}
+```tut:silent
+import org.http4s.server.jetty._
+
+object JettyExample extends App {
+  JettyBuilder.bindHttp(8080)
+    .mountService(service, "/http4s")
+    .run
+    .awaitShutdown()
+}
+```
 
 ## An Asynchronous Client ##
 
 http4s also offers an asynchronous HTTP client built on the same model as the server.
 
-{%code_ref ../../../examples/blaze/src/main/scala/com/example/http4s/blaze/ClientExample.scala blaze_client_example %}
+```tut:silent
+import org.http4s.Status.NotFound
+import org.http4s.Status.ResponseClass.Successful
+import org.http4s.argonaut.jsonOf
+
+import _root_.argonaut.DecodeJson
+
+case class Foo(bar: String)
+
+implicit val fooDecode = DecodeJson(c => for { // Argonaut decoder. Could also use json4s.
+   bar <- (c --\ "bar").as[String]
+} yield Foo(bar))
+
+// jsonOf is defined for Json4s and Argonaut, just need the right decoder!
+implicit val fooDecoder = jsonOf[Foo]
+
+val client = org.http4s.client.blaze.defaultClient
+
+// Match on response code!
+val page2 = client(uri("http://http4s.org/resources/foo.json")).flatMap {
+  case Successful(resp) => resp.as[Foo].map("Received response: " + _)
+  case NotFound(resp)   => Task.now("Not Found!!!")
+  case resp             => Task.now("Failed: " + resp.status)
+}
+
+println(page2.run)
+```
 
 ## Other features ##
 

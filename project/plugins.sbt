@@ -1,4 +1,7 @@
-resolvers += "jgit-repo" at "http://download.eclipse.org/jgit/maven"
+resolvers += Resolver.url(
+  "tpolecat-sbt-plugin-releases",
+    url("http://dl.bintray.com/content/tpolecat/sbt-plugin-releases"))(
+        Resolver.ivyStylePatterns)
 
 addSbtPlugin("com.earldouglas" % "xsbt-web-plugin" % "1.0.0")
 addSbtPlugin("com.eed3si9n" % "sbt-buildinfo" % "0.3.2")
@@ -11,5 +14,6 @@ addSbtPlugin("com.typesafe.sbt" % "sbt-site" % "0.8.1")
 addSbtPlugin("com.typesafe.sbt" % "sbt-twirl" % "1.0.4")
 addSbtPlugin("io.gatling" % "gatling-sbt" % "2.1.0")
 addSbtPlugin("io.spray" % "sbt-revolver" % "0.7.2")
+addSbtPlugin("org.tpolecat" % "tut-plugin" % "0.4.0")
 addSbtPlugin("pl.project13.scala" % "sbt-jmh" % "0.1.12")
 

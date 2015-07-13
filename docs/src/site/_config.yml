@@ -1,0 +1,5 @@
+url:         http://localhost:4000/
+baseurl:     /http4s
+
+markdown:    redcarpet
+highlighter: pygments

@@ -204,8 +204,8 @@ lazy val docs = http4sProject("docs")
   .settings(noPublishSettings)
   .settings(unidocSettings)
   .settings(site.settings)
-  .settings(site.jekyllSupport())
   .settings(ghpages.settings)
+  .settings(tutSettings)
   .settings(
     description := "Documentation for http4s",
     autoAPIMappings := true,
@@ -219,16 +219,19 @@ lazy val docs = http4sProject("docs")
         examplesWar,
         loadTest
       ),
-    includeFilter in (JekyllSupport.Jekyll) := "*.html" | "*.css" | "*.png" | "*.jpg" | "*.gif" | "*.js" | "*.swf" | "*.json" | "CNAME",
     siteMappings <++= (mappings in (ScalaUnidoc, packageDoc), apiVersion) map {
       case (m, (major, minor)) => for ((f, d) <- m) yield (f, s"api/$major.$minor/$d")
     },
+    site.addMappingsToSiteDir(tut, ""),
+    includeFilter in makeSite := "*.html" | "*.css" | "*.png" | "*.jpg" | "*.gif" | "*.js" | "*.swf" | "*.yml" | "*.md" | "*.json",
+    ghpagesNoJekyll := false,
     cleanSite <<= Http4sGhPages.cleanSite0,
     synchLocal <<= Http4sGhPages.synchLocal0,
     git.remoteRepo := Properties.envOrNone("GH_TOKEN").fold("git@github.com:http4s/http4s.git"){ token =>
       s"https://${token}@github.com/http4s/http4s.git"
     }
   )
+  .dependsOn(blazeClient, blazeServer, jetty, theDsl, argonaut, scalaXml, twirl)
 
 lazy val examples = http4sProject("examples")
   .settings(noPublishSettings)
