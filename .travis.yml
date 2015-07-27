@@ -2,13 +2,16 @@ language: scala
 scala:
 - 2.10.5
 - 2.11.7
-jdk: oraclejdk7
+jdk: oraclejdk8
 env:
   global:
   - secure: KYFDtmCrWla9HEUMnlNo8rNKAfFeigowxheDikTZr8ZMz/1n9QDqkYF0GBccmk1MwADccI6rhyTEvonZBEYXeJIs+AEMg3WYKaaTg+DYPWXLqXtenmuj9nDChJ28xdTOH/Ne0FtJ1icF7BxrpSepUHKLJma1LZFCSaA7gFdsgtE=
   - secure: MxKRKhjMqSYKibM+IvnVdXRyo8lZNpR7Bx14TSwuUKy6aX9GRHSbGSJpJpr38I42jLgxQIiAPaADgpwE4u1FZnkPxY2+MNoWbNBoCyab7ApB4DyeyRWca5JSl1IJBOHIRknLgdDgwdHaRqZL+p3Dojni1STqwg1row6Y9wms4Es=
 rvm:
 - 1.9.3-p392
+before_script:
+- mkdir -p $HOME/.sbt/launchers/0.13.8/
+- curl -L -o $HOME/.sbt/launchers/0.13.8/sbt-launch.jar http://dl.bintray.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/0.13.8/sbt-launch.jar
 script: bash bin/travis
 webhooks:
   urls:

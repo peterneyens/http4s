@@ -1,10 +1,12 @@
 package org.http4s
 
 import java.io.File
-import java.net.InetAddress
+import java.net.{InetSocketAddress, InetAddress}
 import org.http4s.headers._
 import org.http4s.server.ServerSoftware
 import scalaz.concurrent.Task
+import scalaz.stream.Process
+import scalaz.stream.text.utf8Decode
 import scalaz.syntax.monad._
 
 /**
@@ -20,6 +22,17 @@ sealed trait Message extends MessageOps {
   def headers: Headers
   
   def body: EntityBody
+
+  final def bodyAsText(implicit defaultCharset: Charset = DefaultCharset): Process[Task, String] = {
+    (charset getOrElse defaultCharset) match {
+      case Charset.`UTF-8` =>
+        // suspect this one is more efficient, though this is superstition
+        body |> utf8Decode
+      case cs =>
+        body |> util.decode(cs)
+    }
+
+  }
   
   def attributes: AttributeMap
   
@@ -72,7 +85,9 @@ sealed trait Message extends MessageOps {
 
   def contentType: Option[`Content-Type`] = headers.get(`Content-Type`)
 
-  def charset: Option[Charset] = contentType.map(_.charset)
+  /** Returns the charset parameter of the `Content-Type` header, if present.
+    * Does not introspect the body for media types that define a charset internally. */
+  def charset: Option[Charset] = contentType.flatMap(_.charset)
 
   def isChunked: Boolean = headers.get(`Transfer-Encoding`).exists(_.values.list.contains(TransferCoding.chunked))
 
@@ -170,23 +185,32 @@ case class Request(
    */
   def params: Map[String, String] = uri.params
 
-  lazy val remote: Option[InetAddress] = attributes.get(Keys.Remote)
-  lazy val remoteAddr: Option[String] = remote.map(_.getHostAddress)
+  private lazy val connectionInfo = attributes.get(Keys.ConnectionInfo)
+
+  lazy val remote: Option[InetSocketAddress] = connectionInfo.map(_.remote)
+  lazy val remoteAddr: Option[String] = remote.map(_.getHostString)
   lazy val remoteHost: Option[String] = remote.map(_.getHostName)
+  lazy val remotePort: Option[Int]    = remote.map(_.getPort)
 
   lazy val remoteUser: Option[String] = None
 
-  lazy val serverName: String = {
-    uri.host.map(_.value)
+  lazy val server: Option[InetSocketAddress] = connectionInfo.map(_.local)
+  lazy val serverAddr: String = {
+    server.map(_.getHostString)
+      .orElse(uri.host.map(_.value))
       .orElse(headers.get(Host).map(_.host))
       .getOrElse(InetAddress.getLocalHost.getHostName)
   }
 
   lazy val serverPort: Int = {
-    uri.port
+    server.map(_.getPort)
+      .orElse(uri.port)
       .orElse(headers.get(Host).flatMap(_.port))
       .getOrElse(80)
   }
+
+  /** Whether the Request was received over a secure medium */
+  lazy val isSecure: Option[Boolean] = connectionInfo.map(_.secure)
 
   def serverSoftware: ServerSoftware = attributes.get(Keys.ServerSoftware).getOrElse(ServerSoftware.Unknown)
 
@@ -206,10 +230,13 @@ case class Request(
 }
 
 object Request {
+
+  case class Connection(local: InetSocketAddress, remote: InetSocketAddress, secure: Boolean)
+
   object Keys {
     val PathInfoCaret = AttributeKey.http4s[Int]("request.pathInfoCaret")
     val PathTranslated = AttributeKey.http4s[File]("request.pathTranslated")
-    val Remote = AttributeKey.http4s[InetAddress]("request.remote")
+    val ConnectionInfo = AttributeKey.http4s[Connection]("request.remote")
     val ServerSoftware = AttributeKey.http4s[ServerSoftware]("request.serverSoftware")
   }
 }

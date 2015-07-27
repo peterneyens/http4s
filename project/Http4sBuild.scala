@@ -43,13 +43,8 @@ object Http4sBuild extends Build {
       None
   }
 
-  lazy val javaVersion = VersionNumber(sys.props("java.specification.version")) match {
-    case VersionNumber(Seq(x, y, _*), _, _) => (x.toInt, y.toInt)
-  }
-
   lazy val argonautSupport     = "org.spire-math"           %% "argonaut-support"        % jawnParser.revision
-  lazy val alpnBoot            = "org.mortbay.jetty.alpn"    % "alpn-boot"               %  "8.0.0.v20140317" // must use Java8!
-  lazy val base64              = "net.iharder"               % "base64"                  % "2.3.8"
+  lazy val alpnBoot            = "org.mortbay.jetty.alpn"    % "alpn-boot"               %  "8.1.3.v20150130"
   lazy val blaze               = "org.http4s"               %% "blaze-http"              % "0.8.2"
   lazy val gatlingTest         = "io.gatling"                % "gatling-test-framework"  % "2.1.6"
   lazy val gatlingHighCharts   = "io.gatling.highcharts"     % "gatling-charts-highcharts" % gatlingTest.revision
@@ -75,9 +70,10 @@ object Http4sBuild extends Build {
   def scalaReflect(sv: String) = "org.scala-lang"            % "scala-reflect"           % sv
   lazy val scalameter          = "com.storm-enroute"        %% "scalameter"              % "0.6"
   lazy val scalaXml            = "org.scala-lang.modules"   %% "scala-xml"               % "1.0.3"
+  lazy val scalazCore          = "org.scalaz"               %% "scalaz-core" % "7.1.2"
   lazy val scalazScalacheckBinding = "org.scalaz"           %% "scalaz-scalacheck-binding" % "7.1.2"
   lazy val scalazSpecs2        = "org.typelevel"            %% "scalaz-specs2"           % "0.3.0"
-  lazy val scalazStream        = "org.scalaz.stream"        %% "scalaz-stream"           % "0.7.1a"
+  lazy val scalazStream        = "org.scalaz.stream"        %% "scalaz-stream"           % "0.7.2a"
   lazy val scodecBits          = "org.scodec"               %% "scodec-bits"             % "1.0.6"
   lazy val tomcatCatalina      = "org.apache.tomcat"         % "tomcat-catalina"         % "8.0.21"
   lazy val tomcatCoyote        = "org.apache.tomcat"         % "tomcat-coyote"           % tomcatCatalina.revision

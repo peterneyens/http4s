@@ -6,7 +6,7 @@ import org.http4s.headers.`Transfer-Encoding`
 import server._
 
 import javax.servlet.http.{HttpServletResponse, HttpServletRequest, HttpServlet}
-import java.net.InetAddress
+import java.net.{InetSocketAddress, InetAddress}
 
 import scala.collection.JavaConverters._
 import javax.servlet._
@@ -28,6 +28,9 @@ class Http4sServlet(service: HttpService,
   private val asyncTimeoutMillis = if (asyncTimeout.isFinite()) asyncTimeout.toMillis else -1 // -1 == Inf
 
   private[this] var serverSoftware: ServerSoftware = _
+
+  // micro-optimization: unwrap the service and call its .run directly
+  private[this] val serviceFn = service.run
 
   override def init(config: ServletConfig) {
     val servletContext = config.getServletContext
@@ -80,7 +83,7 @@ class Http4sServlet(service: HttpService,
                             request: Request,
                             bodyWriter: BodyWriter): Task[Unit] = {
     ctx.addListener(new AsyncTimeoutHandler(request, bodyWriter))
-    val response = Task.fork(service.or(request, Response.notFound(request)))(threadPool)
+    val response = Task.fork(serviceFn(request))(threadPool)
     val servletResponse = ctx.getResponse.asInstanceOf[HttpServletResponse]
     renderResponse(response, servletResponse, bodyWriter)
   }
@@ -138,7 +141,11 @@ class Http4sServlet(service: HttpService,
       body = servletIo.reader(req),
       attributes = AttributeMap(
         Request.Keys.PathInfoCaret(req.getContextPath.length + req.getServletPath.length),
-        Request.Keys.Remote(InetAddress.getByName(req.getRemoteAddr)),
+        Request.Keys.ConnectionInfo(Request.Connection(
+          InetSocketAddress.createUnresolved(req.getRemoteAddr, req.getRemotePort),
+          InetSocketAddress.createUnresolved(req.getLocalAddr, req.getLocalPort),
+          req.isSecure
+        )),
         Request.Keys.ServerSoftware(serverSoftware)
       )
     )

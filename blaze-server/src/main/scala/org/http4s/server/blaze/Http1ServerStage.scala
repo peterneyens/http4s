@@ -12,6 +12,10 @@ import org.http4s.blaze.http.http_parser.BaseExceptions.{BadRequest, ParserExcep
 import org.http4s.blaze.http.http_parser.Http1ServerParser
 import org.http4s.blaze.channel.SocketConnection
 
+import org.http4s.util.StringWriter
+import org.http4s.util.CaseInsensitiveString._
+import org.http4s.headers.{Connection, `Content-Length`}
+
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -19,33 +23,34 @@ import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.{Try, Success, Failure}
 
-import org.http4s.Status.InternalServerError
-import org.http4s.util.StringWriter
-import org.http4s.util.CaseInsensitiveString._
-import org.http4s.headers.{Connection, `Content-Length`}
-
 import scalaz.concurrent.{Strategy, Task}
 import scalaz.{\/-, -\/}
 import java.util.concurrent.ExecutorService
 
 
+object Http1ServerStage {
+  def apply(service: HttpService,
+            attributes: AttributeMap = AttributeMap.empty,
+            pool: ExecutorService = Strategy.DefaultExecutorService,
+            enableWebSockets: Boolean = false ): Http1ServerStage = {
+    if (enableWebSockets) new Http1ServerStage(service, attributes, pool) with WebSocketSupport
+    else                  new Http1ServerStage(service, attributes, pool)
+  }
+}
+
 class Http1ServerStage(service: HttpService,
-                       conn: Option[SocketConnection],
-                       pool: ExecutorService = Strategy.DefaultExecutorService)
+                       requestAttrs: AttributeMap,
+                       pool: ExecutorService)
                   extends Http1ServerParser
                   with TailStage[ByteBuffer]
                   with Http1Stage
 {
+  // micro-optimization: unwrap the service and call its .run directly
+  private[this] val serviceFn = service.run
+
   protected val ec = ExecutionContext.fromExecutorService(pool)
 
   val name = "Http4sServerStage"
-
-  private val requestAttrs = (
-      for {
-        conn  <- conn
-        raddr <- conn.remoteInetAddress
-      } yield AttributeMap(AttributeEntry(Request.Keys.Remote, raddr))
-    ).getOrElse(AttributeMap.empty)
 
   private var uri: String = null
   private var method: String = null
@@ -90,8 +95,8 @@ class Http1ServerStage(service: HttpService,
         runRequest(buff)
       }
       catch {
-        case t: ParserException => badMessage("Error parsing status or headers in requestLoop()", t, Request())
-        case t: Throwable       => fatalError(t, "error in requestLoop()")
+        case t: BadRequest => badMessage("Error parsing status or headers in requestLoop()", t, Request())
+        case t: Throwable  => internalServerError("error in requestLoop()", t, Request(), () => Future.successful(emptyBuffer))
       }
 
     case Failure(Cmd.EOF) => stageShutdown()
@@ -102,12 +107,12 @@ class Http1ServerStage(service: HttpService,
     val h = Headers(headers.result())
     headers.clear()
     val protocol = if (minor == 1) HttpVersion.`HTTP/1.1` else HttpVersion.`HTTP/1.0`
+
     (for {
       method <- Method.fromString(this.method)
       uri <- Uri.requestTarget(this.uri)
-    } yield {
-      Some(Request(method, uri, protocol, h, body, requestAttrs))
-    }).valueOr { e =>
+    } yield Some(Request(method, uri, protocol, h, body, requestAttrs))
+    ).valueOr { e =>
       badMessage(e.details, new BadRequest(e.sanitized), Request().copy(httpVersion = protocol))
       None
     }
@@ -118,21 +123,10 @@ class Http1ServerStage(service: HttpService,
 
     collectMessage(body) match {
       case Some(req) =>
-        Task.fork(service(req))(pool)
+        Task.fork(serviceFn(req))(pool)
           .runAsync {
-          case \/-(Some(resp)) =>
-            renderResponse(req, resp, cleanup)
-
-          case \/-(None)       =>
-            renderResponse(req, Response.notFound(req).run, cleanup)
-
-          case -\/(t)    =>
-            logger.error(t)(s"Error running route: $req")
-            val resp = Response(InternalServerError).withBody("500 Internal Service Error\n" + t.getMessage)
-              .run
-              .withHeaders(Connection("close".ci))
-
-            renderResponse(req, resp, cleanup)   // will terminate the connection due to connection: close header
+          case \/-(resp) => renderResponse(req, resp, cleanup)
+          case -\/(t)    => internalServerError(s"Error running route: $req", t, req, cleanup)
         }
 
       case None => // NOOP, this should be handled in the collectMessage method
@@ -148,8 +142,8 @@ class Http1ServerStage(service: HttpService,
 
     // Need to decide which encoder and if to close on finish
     val closeOnFinish = respConn.map(_.hasClose).orElse {
-      Connection.from(req.headers).map(checkCloseConnection(_, rr))
-    }.getOrElse(minor == 0)   // Finally, if nobody specifies, http 1.0 defaults to close
+                          Connection.from(req.headers).map(checkCloseConnection(_, rr))
+                        }.getOrElse(minor == 0)   // Finally, if nobody specifies, http 1.0 defaults to close
 
     // choose a body encoder. Will add a Transfer-Encoding header if necessary
     val lengthHeader = `Content-Length`.from(resp.headers)
@@ -206,10 +200,16 @@ class Http1ServerStage(service: HttpService,
 
   /////////////////// Error handling /////////////////////////////////////////
 
-  protected def badMessage(msg: String, t: ParserException, req: Request) {
+  final protected def badMessage(debugMessage: String, t: ParserException, req: Request) {
+    logger.debug(t)(s"Bad Request: $debugMessage")
     val resp = Response(Status.BadRequest).withHeaders(Connection("close".ci), `Content-Length`(0))
     renderResponse(req, resp, () => Future.successful(emptyBuffer))
-    logger.debug(t)(s"Bad Request: $msg")
+  }
+  
+  final protected def internalServerError(errorMsg: String, t: Throwable, req: Request, bodyCleanup: () => Future[ByteBuffer]): Unit = {
+    logger.error(t)(errorMsg)
+    val resp = Response(Status.InternalServerError).withHeaders(Connection("close".ci), `Content-Length`(0))
+    renderResponse(req, resp, bodyCleanup)  // will terminate the connection due to connection: close header
   }
 
   /////////////////// Stateful methods for the HTTP parser ///////////////////
