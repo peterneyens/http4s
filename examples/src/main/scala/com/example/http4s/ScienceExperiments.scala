@@ -136,5 +136,11 @@ object ScienceExperiments {
       conn.fold(Ok("Couldn't find connection info!")){ case Request.Connection(loc,rem,secure) =>
         Ok(s"Local: $loc, Remote: $rem, secure: $secure")
       }
+
+    case HEAD -> Root / "works" =>
+      Ok()
+
+    case HEAD -> Root / "hangs" =>
+      Ok("with content")
   }
 }
