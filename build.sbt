@@ -5,6 +5,7 @@ import com.earldouglas.xwp.XwpPlugin
 import com.typesafe.sbt.SbtGhPages.GhPagesKeys._
 import com.typesafe.sbt.SbtSite.site
 import com.typesafe.sbt.SbtSite.SiteKeys._
+import com.typesafe.sbt.pgp.PgpKeys._
 import com.typesafe.sbt.site.JekyllSupport
 import com.typesafe.tools.mima.plugin.MimaPlugin.mimaDefaultSettings
 import com.typesafe.tools.mima.plugin.MimaKeys._
@@ -13,7 +14,7 @@ import pl.project13.scala.sbt.SbtJmh.jmhSettings
 
 // Global settings
 organization in ThisBuild := "org.http4s"
-version      in ThisBuild := "0.9.0-SNAPSHOT"
+version      in ThisBuild := "0.10.0-SNAPSHOT"
 apiVersion   in ThisBuild <<= version.map(extractApiVersion)
 scalaVersion in ThisBuild := "2.10.5"
 crossScalaVersions in ThisBuild <<= scalaVersion(Seq(_, "2.11.7"))
@@ -131,7 +132,7 @@ lazy val jawn = libraryProject("jawn")
 lazy val argonaut = libraryProject("argonaut")
   .settings(
     description := "Provides Argonaut codecs for http4s",
-    libraryDependencies += argonautSupport
+    libraryDependencies += jawnArgonaut
   )
   .dependsOn(core % "compile;test->test", jawn % "compile;test->test")
 
@@ -139,8 +140,8 @@ lazy val json4s = libraryProject("json4s")
   .settings(
     description := "Base library for json4s codecs for http4s",
     libraryDependencies ++= Seq(
-      json4sCore,
-      json4sSupport
+      jawnJson4s,
+      json4sCore
     )
   )
   .dependsOn(jawn % "compile;test->test")
@@ -294,7 +295,7 @@ def http4sProject(name: String) = Project(name, file(name))
   .settings(publishSettings)
   .settings(
     moduleName := s"http4s-$name",
-    testOptions in Test += Tests.Argument("xonly", "failtrace")
+    testOptions in Test += Tests.Argument(TestFrameworks.Specs2,"xonly", "failtrace")
   )
 
 def libraryProject(name: String) = http4sProject(name)
@@ -390,6 +391,7 @@ lazy val commonSettings = Seq(
   libraryDependencies  ++= Seq(
     scalameter,
     scalazScalacheckBinding,
+    scalaCheck,
     scalazSpecs2
   ).map(_ % "test")
 )
@@ -403,6 +405,7 @@ lazy val publishSettings = Seq(
 
 lazy val noPublishSettings = Seq(
   publish := (),
+  publishSigned := (),
   publishLocal := (),
   publishArtifact := false
 )

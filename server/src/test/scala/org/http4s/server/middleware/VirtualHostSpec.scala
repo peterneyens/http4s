@@ -36,36 +36,36 @@ class VirtualHostSpec extends Http4sSpec {
         val req1 = Request(GET, uri("/numbers/1"), httpVersion = HttpVersion.`HTTP/1.1`)
         val req2 = Request(GET, uri("/numbers/1"), httpVersion = HttpVersion.`HTTP/2.0`)
 
-        virtualServices(req1).run.status must_== BadRequest
-        virtualServices(req2).run.status must_== BadRequest
+        virtualServices.apply(req1).run.status must_== BadRequest
+        virtualServices.apply(req2).run.status must_== BadRequest
       }
 
       "honor the Host header host" in {
         val req = Request(GET, uri("/numbers/1"))
-          .withHeaders(Host("servicea"))
+          .replaceAllHeaders(Host("servicea"))
 
-        virtualServices(req).run.as[String].run must equal ("servicea")
+        virtualServices.apply(req).run.as[String].run must equal ("servicea")
       }
 
       "honor the Host header port" in {
         val req = Request(GET, uri("/numbers/1"))
-          .withHeaders(Host("serviceb", Some(80)))
+          .replaceAllHeaders(Host("serviceb", Some(80)))
 
-        virtualServices(req).run.as[String].run must equal ("serviceb")
+        virtualServices.apply(req).run.as[String].run must equal ("serviceb")
       }
 
       "ignore the Host header port if not specified" in {
         val good = Request(GET, uri("/numbers/1"))
-          .withHeaders(Host("servicea", Some(80)))
+          .replaceAllHeaders(Host("servicea", Some(80)))
 
-        virtualServices(good).run.as[String].run must equal ("servicea")
+        virtualServices.apply(good).run.as[String].run must equal ("servicea")
       }
 
       "result in a 404 if the hosts fail to match" in {
         val req = Request(GET, uri("/numbers/1"))
-          .withHeaders(Host("serviceb", Some(8000)))
+          .replaceAllHeaders(Host("serviceb", Some(8000)))
 
-        virtualServices(req).run.status must_== NotFound
+        virtualServices.apply(req).run.status must_== NotFound
       }
     }
 
@@ -78,36 +78,36 @@ class VirtualHostSpec extends Http4sSpec {
 
       "match an exact route" in {
         val req = Request(GET, uri("/numbers/1"))
-          .withHeaders(Host("servicea", Some(80)))
+          .replaceAllHeaders(Host("servicea", Some(80)))
 
-        virtualServices(req).run.as[String].run must equal ("servicea")
+        virtualServices.apply(req).run.as[String].run must equal ("servicea")
       }
 
       "allow for a dash in the service" in {
         val req = Request(GET, uri("/numbers/1"))
-          .withHeaders(Host("foo.foo-service", Some(80)))
+          .replaceAllHeaders(Host("foo.foo-service", Some(80)))
 
-        virtualServices(req).run.as[String].run must equal ("default")
+        virtualServices.apply(req).run.as[String].run must equal ("default")
       }
 
       "match a route with a wildcard route" in {
         val req = Request(GET, uri("/numbers/1"))
-        val reqs = Seq(req.withHeaders(Host("a.service", Some(80))),
-                       req.withHeaders(Host("A.service", Some(80))),
-                       req.withHeaders(Host("b.service", Some(80))))
+        val reqs = Seq(req.replaceAllHeaders(Host("a.service", Some(80))),
+                       req.replaceAllHeaders(Host("A.service", Some(80))),
+                       req.replaceAllHeaders(Host("b.service", Some(80))))
 
         forall(reqs){ req =>
-          virtualServices(req).run.as[String].run must equal ("serviceb")
+          virtualServices.apply(req).run.as[String].run must equal ("serviceb")
         }
       }
 
       "not match a route with an abscent wildcard" in {
         val req = Request(GET, uri("/numbers/1"))
-        val reqs = Seq(req.withHeaders(Host(".service", Some(80))),
-                       req.withHeaders(Host("service", Some(80))))
+        val reqs = Seq(req.replaceAllHeaders(Host(".service", Some(80))),
+                       req.replaceAllHeaders(Host("service", Some(80))))
 
         forall(reqs){ req =>
-          virtualServices(req).run.status must_== NotFound
+          virtualServices.apply(req).run.status must_== NotFound
         }
       }
     }

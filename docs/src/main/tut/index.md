@@ -34,10 +34,7 @@ Building on the FP tools of scalaz not only makes an `HttpService` simple to def
 it also makes them easy to compose.  Adding gzip compression or rewriting URIs is
 as simple as applying a middleware to an `HttpService`.
 
-```scala
-val wcompression = middleware.GZip(service)
-val translated   = middleware.URITranslation.translateRoot("/http4s")(service)
-```
+{%code_ref ../test/scala/org/http4s/docs/CompositionExample.scala composition_example %}
 
 ### Asynchronous
 
@@ -183,10 +180,10 @@ Artifacts for scala 2.10 and 2.11 are available from Maven Central:
 
 ```scala
 libraryDependencies += "org.http4s" %% "http4s-dsl"          % version  // to use the core dsl
-libraryDependencies += "org.http4s" %% "http4s-blazeserver"  % version  // to use the blaze backend
+libraryDependencies += "org.http4s" %% "http4s-blaze-server" % version  // to use the blaze backend
 libraryDependencies += "org.http4s" %% "http4s-servlet"      % version  // to use the raw servlet backend
 libraryDependencies += "org.http4s" %% "http4s-jetty"        % version  // to use the jetty servlet backend
-libraryDependencies += "org.http4s" %% "http4s-blazeclient"  % version  // to use the blaze client
+libraryDependencies += "org.http4s" %% "http4s-blaze-client" % version  // to use the blaze client
 ```
 
 Snapshots for the development branch are available in the sonatype snapshots repos.

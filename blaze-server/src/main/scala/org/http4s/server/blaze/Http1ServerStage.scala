@@ -4,8 +4,9 @@ package blaze
 
 
 import org.http4s.blaze.pipeline.Command.EOF
-import org.http4s.blaze.{BodylessWriter, Http1Stage}
+import org.http4s.blaze.Http1Stage
 import org.http4s.blaze.pipeline.{Command => Cmd, TailStage}
+import org.http4s.blaze.util.BodylessWriter
 import org.http4s.blaze.util.Execution._
 import org.http4s.blaze.util.BufferTools.emptyBuffer
 import org.http4s.blaze.http.http_parser.BaseExceptions.{BadRequest, ParserException}
@@ -202,13 +203,13 @@ class Http1ServerStage(service: HttpService,
 
   final protected def badMessage(debugMessage: String, t: ParserException, req: Request) {
     logger.debug(t)(s"Bad Request: $debugMessage")
-    val resp = Response(Status.BadRequest).withHeaders(Connection("close".ci), `Content-Length`(0))
+    val resp = Response(Status.BadRequest).replaceAllHeaders(Connection("close".ci), `Content-Length`(0))
     renderResponse(req, resp, () => Future.successful(emptyBuffer))
   }
   
   final protected def internalServerError(errorMsg: String, t: Throwable, req: Request, bodyCleanup: () => Future[ByteBuffer]): Unit = {
     logger.error(t)(errorMsg)
-    val resp = Response(Status.InternalServerError).withHeaders(Connection("close".ci), `Content-Length`(0))
+    val resp = Response(Status.InternalServerError).replaceAllHeaders(Connection("close".ci), `Content-Length`(0))
     renderResponse(req, resp, bodyCleanup)  // will terminate the connection due to connection: close header
   }
 
