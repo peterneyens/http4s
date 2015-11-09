@@ -1,7 +1,7 @@
-To preview the documentation locally, cd to src/jekyll and run:
+To preview the documentation locally:
 
-```
-jekyll serve --baseurl ""
+```sh
+sbt ++2.11.7 makeSite && jekyll serve --source docs/target/site
 ```
 
-The site will appear at [http://0.0.0.0:4000/](http://0.0.0.0:4000/)
+The site will appear at [http://0.0.0.0:4000/http4s](http://0.0.0.0:4000/http4s)
