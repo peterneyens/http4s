@@ -11,193 +11,79 @@ import org.http4s.dsl._
 import org.http4s.server._
 ```
 
-http4s is a minimal, idiomatic Scala interface for HTTP.  http4s is Scala's answer to Ruby's 
-Rack, Python's WSGI, Haskell's WAI, and Java's Servlets.
+http4s is an Scala library for building HTTP server and client
+applications.
 
-## HttpService ##
+## Audience ##
 
-An `HttpService` transforms a `Request` into an asynchronous `Task[Response]`. http4s provides a variety
-of helpers to facilitate the creation of the `Task[Response]` from common results.
+http4s strives to appeal to Scala users of all levels.  http4s fully
+embraces functional programming and types for maximum composability
+and safety.  We aim to make the library and documentation accessible
+to those just beginning their functional programming journey, without
+hiding concepts that are well understood by those further along.
 
-HttpServices are _type safe_, _composable_, and _asynchronous_.
+## Quickstart ##
 
-### Type safety
+We start by creating a simple build definition.  http4s is designed to
+support multiple server implementations, client implementations, and
+DSLs/libraries/frameworks for declaring services.  In this tutorial,
+we will use Blaze, an fast NIO2 network library, for both server and
+client.  We will use http4s-dsl, a simple syntactic sugar based on
+pattern matching, for our services.
 
-`Request` and `Response` sit at the top level of a typed, immutable model of HTTP.
+Create a new directory with the following build.sbt:
 
-* Well-known headers are lazily parsed into a rich model derived from Spray HTTP.
-* Bodies are parsed and generated from a [scalaz-stream](http://github.com/scalaz/scalaz-stream) of bytes.
+```scala
+scalaVersion := "2.11.7"
 
-### Composable
+lazy val Http4sVersion = "0.11.0-SNAPSHOT"
 
-Building on the FP tools of scalaz not only makes an `HttpService` simple to define,
-it also makes them easy to compose.  Adding gzip compression or rewriting URIs is
-as simple as applying a middleware to an `HttpService`.
+libraryDependencies ++= Seq(
+  "org.http4s" %% "http4s-blaze-server" % Http4sVersion
+  "org.http4s" %% "http4s-blaze-client" % Http4sVersion
+  "org.http4s" %% "http4s-dsl"          % Http4sVersion
+)
+```
 
-{%code_ref ../test/scala/org/http4s/docs/CompositionExample.scala composition_example %}
+Alternative modules to be discussed later include a servlet backend
+for Tomcat and Jetty, as well as the self-documenting Rho DSL.
 
-### Asynchronous
+Moving right on, run `sbt console` and we can start developing from
+our REPL.
 
-Any http4s response can be streamed from an asynchronous source. http4s offers a variety
-of helpers to help you get your data out the door in the fastest way possible without
-tying up too many threads.
+## Defining an HTTP service ##
+
+http4s server applications are built upon an `HttpService`.  An
+`HttpService` receives a `Request` and returns a `Task[Response]`.
+The `Task[Response]` is an asynchronous computation that generates a
+response to the client.  (Formally, an `HttpService` is a
+[Kleisli][yokota-kleisli] arrow in the [Task][perrett-task] monad.
+Users unfamiliar with Kleisli and Task are encouraged to follow the
+links at their own pace, though beginners can proceed and still be
+productive.)
+
+[yokota-kleisli]: http://eed3si9n.com/learning-scalaz/Composing+monadic+functions.html
+[perrett-task]: http://timperrett.com/2014/07/20/scalaz-task-the-missing-documentation
+
+First, let's import the core types of http4s along with the
+http4s-dsl.
 
 ```tut:silent
-// Make your model safe and streaming by using a scalaz-stream Process
-def getData(req: Request): Process[Task, String] = ???
+import org.http4s._
+import org.http4s.dsl._
+```
 
+Constructing an HTTP service in http4s-dsl is as simple as pattern
+matching the request to `HttpService.apply`:
+
+```tut
 val service = HttpService {
-  // Wire your data into your service
-  case req @ GET -> Root / "streaming" => Ok(getData(req))
-
-  // You can use helpers to send any type of data with an available EntityEncoder[T]
-  case GET -> Root / "synchronous" => Ok("This is good to go right now.")
+  case GET -> Root / name => Ok(s"Hello, $name.")
 }
 ```
 
-http4s is a forward-looking technology.  HTTP/2.0 and WebSockets will play a central role.
+But what does it do?  We hope it's self-apparent, but in case not,
+let's build a client to try it out.
 
-```tut:silent
-import org.http4s.server._
-import org.http4s.server.blaze._
-import org.http4s.websocket.WebsocketBits._
-import org.http4s.server.websocket._
+## Client ##
 
-import scala.concurrent.duration._
-
-import scalaz.concurrent.Strategy
-import scalaz.stream._
-import scalaz.stream.async.unboundedQueue
-import scalaz.stream.time.awakeEvery
-
-val route = HttpService {
-  case GET -> Root / "hello" =>
-    Ok("Hello world.")
-
-  case req @ GET -> Root / "ws" =>
-    val src = awakeEvery(1.seconds)(Strategy.DefaultStrategy, DefaultScheduler).map{ d => Text(s"Ping! $d") }
-    val sink: Sink[Task, WebSocketFrame] = Process.constant {
-      case Text(t, _) => Task.delay( println(t))
-      case f       => Task.delay(println(s"Unknown type: $f"))
-    }
-    WS(Exchange(src, sink))
-
-  case req@ GET -> Root / "wsecho" =>
-    val q = unboundedQueue[WebSocketFrame]
-    val src = q.dequeue.collect {
-      case Text(msg, _) => Text("You sent the server: " + msg)
-    }
-
-    WS(Exchange(src, q.enqueue))
-  }
-```
-
-## Choose your backend
-
-http4s supports running the same service on multiple backends.  Pick the deployment model that fits your 
-needs now, and easily port if and when your needs change.
-### blaze
-
-[blaze](http://github.com/http4s/blaze) is an NIO framework.  Run http4s on blaze for maximum throughput.
-
-```tut:silent
-import org.http4s.server.blaze.BlazeBuilder
-
-object BlazeExample extends App {
-  BlazeBuilder.bindHttp(8080)
-    .mountService(service, "/http4s")
-    .run
-    .awaitShutdown()
-}
-```
-
-### Servlets
-
-http4s is committed to first-class support of the Servlet API.  Develop and deploy services 
-on your existing infrastructure, and take full advantage of the mature JVM ecosystem.
-http4s can run in a .war on any Servlet 3.0+ container, and comes with convenient builders
-for embedded Tomcat and Jetty containers.
-
-```tut:silent
-import org.http4s.server.jetty._
-
-object JettyExample extends App {
-  JettyBuilder.bindHttp(8080)
-    .mountService(service, "/http4s")
-    .run
-    .awaitShutdown()
-}
-```
-
-## An Asynchronous Client ##
-
-http4s also offers an asynchronous HTTP client built on the same model as the server.
-
-```tut:silent
-import org.http4s.Status.NotFound
-import org.http4s.Status.ResponseClass.Successful
-import org.http4s.argonaut.jsonOf
-
-import _root_.argonaut.DecodeJson
-
-case class Foo(bar: String)
-
-implicit val fooDecode = DecodeJson(c => for { // Argonaut decoder. Could also use json4s.
-   bar <- (c --\ "bar").as[String]
-} yield Foo(bar))
-
-// jsonOf is defined for Json4s and Argonaut, just need the right decoder!
-implicit val fooDecoder = jsonOf[Foo]
-
-val client = org.http4s.client.blaze.defaultClient
-
-// Match on response code!
-val page2 = client(uri("http://http4s.org/resources/foo.json")).flatMap {
-  case Successful(resp) => resp.as[Foo].map("Received response: " + _)
-  case NotFound(resp)   => Task.now("Not Found!!!")
-  case resp             => Task.now("Failed: " + resp.status)
-}
-
-println(page2.run)
-```
-
-## Other features ##
-
-* [twirl](https://github.com/playframework/twirl) integration: use Play framework templates with http4s
-
-
-## Projects using http4s ##
-
-If you have a project you would like to include in this list, let us know on IRC or submit an issue.
-
-* [httpize](http://httpize.herokuapp.com/): a [httpbin](http://httpbin.org/) built with http4s
-* [Project ρ](https://github.com/http4s/rho): a self-documenting HTTP server DSL built upon http4s
-* [CouchDB-Scala](https://github.com/beloglazov/couchdb-scala): a purely functional Scala client for CouchDB
-
-## Get it! ##
-
-http4s is built with Java 8. Artifacts for scala 2.10 and 2.11 are available from Maven Central:
-
-```scala
-libraryDependencies += "org.http4s" %% "http4s-dsl"          % version  // to use the core dsl
-libraryDependencies += "org.http4s" %% "http4s-blaze-server" % version  // to use the blaze backend
-libraryDependencies += "org.http4s" %% "http4s-servlet"      % version  // to use the raw servlet backend
-libraryDependencies += "org.http4s" %% "http4s-jetty"        % version  // to use the jetty servlet backend
-libraryDependencies += "org.http4s" %% "http4s-blaze-client" % version  // to use the blaze client
-```
-
-Snapshots for the development branch are available in the sonatype snapshots repos.
-
-To get scalaz-stream artifacts, you will probably need to add BinTray to your resolvers:
-
-```scala
-resolvers += "Scalaz Bintray Repo" at "http://dl.bintray.com/scalaz/releases"
-```
-
-## Build & run ##
-
-```sh
-$ git clone https://github.com/http4s/http4s.git
-$ cd http4s
-$ sbt examples-blaze/run
-```
