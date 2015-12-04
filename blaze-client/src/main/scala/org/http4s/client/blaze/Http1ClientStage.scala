@@ -115,10 +115,22 @@ final class Http1ClientStage(userAgent: Option[`User-Agent`], protected val ec: 
           case None       => getHttpMinor(req) == 0
         }
 
-        val next: Task[StringWriter] = if (flushPrelude) {
-          val bb = ByteBuffer.wrap(rr.result().getBytes(StandardCharsets.ISO_8859_1))
-          futureToTask(channelWrite(bb))(ec).map(_ => new StringWriter)
-        } else Task.now(rr)
+        val next: Task[StringWriter] = 
+          if (!flushPrelude) Task.now(rr)
+          else Task.async[StringWriter] { cb =>
+            val bb = ByteBuffer.wrap(rr.result().getBytes(StandardCharsets.ISO_8859_1))
+            channelWrite(bb).onComplete {
+              case Success(_)    => cb(\/-(new StringWriter))
+              case Failure(EOF)  => stageState.get match {
+                  case Idle | Running => shutdown(); cb(-\/(EOF))
+                  case Error(e)       => cb(-\/(e))
+                }
+
+              case Failure(t)    =>
+                fatalError(t, s"Error during phase: flush prelude")
+                cb(-\/(t))
+            }(ec)
+          }
 
         next.flatMap{ rr =>
           val bodyTask = getChunkEncoder(req, mustClose, rr)
