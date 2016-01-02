@@ -3,6 +3,7 @@ package client
 package middleware
 
 import org.http4s._
+import org.http4s.client.Client.DisposableResponse
 
 import scalaz.concurrent.Task
 
@@ -17,13 +18,13 @@ object FollowRedirect {
       * @param req [[Request]] containing the headers, URI, etc.
       * @return Task which will generate the Response
       */
-    override def open(req: Request): Task[DisposableResponse] =
+    override def prepare(req: Request): Task[DisposableResponse] =
       loop(req, 0)
 
     private def loop(req: Request, redirects: Int): Task[DisposableResponse] = {
-      client.open(req).flatMap { dr =>
+      client.prepare(req).flatMap { case dr @ DisposableResponse(response, dispose) =>
         def doRedirect(method: Method): Task[DisposableResponse] = {
-          dr.response.headers.get(headers.Location) match {
+          response.headers.get(headers.Location) match {
             case Some(headers.Location(uri)) if redirects < maxRedirects =>
               // https://tools.ietf.org/html/rfc7231#section-7.1.2
               val nextUri = uri.copy(
@@ -41,14 +42,14 @@ object FollowRedirect {
           }
         }
 
-        dr.response.status.code match {
+        response.status.code match {
           // We cannot be sure what will happen to the request body so we don't attempt to deal with it
           case 301 | 302 | 307 | 308 if req.body.isHalt =>
-            dr.dispose.flatMap(_ => doRedirect(req.method))
+            dispose.flatMap(_ => doRedirect(req.method))
 
           // Often the result of a Post request where the body has been properly consumed
           case 303 =>
-            dr.dispose.flatMap(_ => doRedirect(Method.GET))
+            dispose.flatMap(_ => doRedirect(Method.GET))
 
           case _ =>
             Task.now(dr)

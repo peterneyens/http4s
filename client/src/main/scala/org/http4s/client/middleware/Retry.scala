@@ -4,6 +4,7 @@ package middleware
 
 import org.http4s.Status.ResponseClass.Successful
 import org.http4s.EmptyBody
+import org.http4s.client.Client.DisposableResponse
 import org.log4s.getLogger
 
 import scala.concurrent.duration._
@@ -20,11 +21,11 @@ object Retry {
 
     def shutdown(): Task[Unit] = client.shutdown()
 
-    def open(req: Request): Task[DisposableResponse] =
+    def prepare(req: Request): Task[DisposableResponse] =
       loop(req, 1)
 
     private def loop(req: Request, attempts: Int): Task[DisposableResponse] = {
-      client.open(req) flatMap {
+      client.prepare(req) flatMap {
         case dr @ DisposableResponse(Successful(resp), _) =>
           Task.now(dr)
         case fail =>

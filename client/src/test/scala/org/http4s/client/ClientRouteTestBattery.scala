@@ -7,6 +7,7 @@ import javax.servlet.http.{HttpServlet, HttpServletRequest, HttpServletResponse}
 
 import org.http4s.Uri.{Authority, RegName}
 import org.http4s.client.testroutes.GetRoutes
+import org.specs2.matcher.TaskMatchers
 
 import org.specs2.specification.core.{ Fragments, Fragment }
 
@@ -15,7 +16,7 @@ import scalaz.stream.Process
 
 
 abstract class ClientRouteTestBattery(name: String, client: Client)
-  extends JettyScaffold(name) with GetRoutes
+  extends JettyScaffold(name) with GetRoutes with TaskMatchers
 {
 
   override def cleanup() = {
@@ -44,15 +45,16 @@ abstract class ClientRouteTestBattery(name: String, client: Client)
 
   private def runTest(req: Request, expected: Response, address: InetSocketAddress): Fragment = {
     s"Execute ${req.method}: ${req.uri}" in {
-      val received = runTest(req, address)
-      checkResponse(received, expected)
+      runTest(req, address) { resp =>
+        Task.delay(checkResponse(resp, expected))
+      }
     }
   }
 
-  private def runTest(req: Request, address: InetSocketAddress): Response = {
+  private def runTest[A](req: Request, address: InetSocketAddress)(f: Response => Task[A]): A = {
     val newreq = req.copy(uri = req.uri.copy(authority = Some(Authority(host = RegName(address.getHostName),
       port = Some(address.getPort)))))
-    client.stream(newreq).runFor(timeout)
+    client(newreq)(f).runFor(timeout)
   }
 
   private def checkResponse(rec: Response, expected: Response) = {

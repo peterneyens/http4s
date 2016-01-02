@@ -33,94 +33,94 @@ class ClientSyntaxSpec extends Http4sSpec with MustThrownMatchers {
   "Client" should {
 
     "support Uris" in {
-      client.getAs[String](req.uri)
+      client(req.uri).as[String]
         .run must_== "hello"
     }
 
     "support Requests" in {
-      client.fetchAs[String](req)
+      client(req).as[String]
         .run must_== "hello"
     }
 
     "support Task[Request]s" in {
-      client.fetchAs[String](Task(req))
+      client(Task(req)).as[String]
         .run must_== "hello"
     }
 
     "default to Ok if no Status is mentioned" in {
-      client.fetchAs[String](req)
+      client(req).as[String]
         .run must_== "hello"
     }
 
     "use Status for Response matching and extraction" in {
-      client.fetch(req) {
+      client(req) {
         case Ok(resp) => Task.now("Ok")
         case _ => Task.now("fail")
       }.run must_== "Ok"
 
-      client.fetch(req) {
+      client(req) {
         case NotFound(resp) => Task.now("fail")
         case _ => Task.now("nomatch")
       }.run must_== "nomatch"
     }
 
     "use Status for Response matching and extraction" in {
-      client.fetch(req) {
+      client(req) {
         case Successful(resp) => resp.as[String]
         case _                => Task.now("fail")
       }.run must_== "hello"
 
-      client.fetch(req) {
+      client(req) {
         case ServerError(resp) => Task.now("fail")
         case _ => Task.now("nomatch")
       }.run must_== "nomatch"
     }
 
     "implicitly resolve to get headers and body" in {
-      client.fetchAs[(Headers, String)](req)
+      client(req).as[(Headers, String)]
         .run._2 must_== "hello"
     }
 
     "attemptAs with successful result" in {
-      client.fetchAs[String](req).attempt
-        .run must be_\/-("hello")
+      client(req).attemptAs[String]
+        .run.run must be_\/-("hello")
     }
 
     "attemptAs with failed parsing result" in {
       val grouchyEncoder = EntityDecoder.decodeBy[Any](MediaRange.`*/*`) { _ =>
         DecodeResult.failure(ParseFailure("MEH!", "MEH!"))
       }
-      client.fetchAs[Any](req)(grouchyEncoder).attempt.run must be_-\/
+      client(req).attemptAs[Any](grouchyEncoder).run.run must be_-\/
     }
 
     "prepAs must add Accept header" in {
-      client.fetchAs(GET(uri("http://www.foo.com/echoheaders")))(EntityDecoder.text)
+      client.prepAs(GET(uri("http://www.foo.com/echoheaders")))(EntityDecoder.text)
         .run must_== "Accept: text/*"
 
-      client.fetchAs[String](GET(uri("http://www.foo.com/echoheaders")))
+      client.prepAs[String](GET(uri("http://www.foo.com/echoheaders")))
         .run must_== "Accept: text/*"
 
-      client.getAs[String](uri("http://www.foo.com/echoheaders"))
+      client.prepAs[String](uri("http://www.foo.com/echoheaders"))
         .run must_== "Accept: text/*"
 
       // Are we combining our mediatypes correctly? This is more of an EntityDecoder spec
       val edec = EntityDecoder.decodeBy(MediaType.`image/jpeg`)(_ => DecodeResult.success("foo!"))
-      client.fetchAs(GET(uri("http://www.foo.com/echoheaders")))(EntityDecoder.text orElse edec)
+      client.prepAs(GET(uri("http://www.foo.com/echoheaders")))(EntityDecoder.text orElse edec)
         .run must_== "Accept: text/*, image/jpeg"
     }
   }
 
   "RequestResponseGenerator" should {
     "Generate requests based on Method" in {
-      client.fetchAs[String](GET(uri("http://www.foo.com/")))
+      client(GET(uri("http://www.foo.com/"))).as[String]
         .run must_== "hello"
       //      GET("http://www.foo.com/", "cats").on(Ok).as[String].run must_== "hello"  // Doesn't compile, body not allowed
 
       // The PUT: /put path just echos the body
-      client.fetchAs[String](PUT(uri("http://www.foo.com/put")))
+      client(PUT(uri("http://www.foo.com/put"))).as[String]
         .run must_== ""
 
-      client.fetchAs[String](PUT(uri("http://www.foo.com/put"), "foo")) // body allowed
+      client(PUT(uri("http://www.foo.com/put"), "foo")).as[String] // body allowed
         .run must_== "foo"
     }
   }
