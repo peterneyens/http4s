@@ -33,18 +33,15 @@ class FollowRedirectSpec extends JettyScaffold("blaze-client Redirect") {
     val addr = initializeServer()
 
     "Honor redirect" in {
-      val resp = client(getUri(s"http://localhost:${addr.getPort}/redirect")).run
-      resp.status must_== Status.Ok
+      client(getUri(s"http://localhost:${addr.getPort}/redirect")).mapR(_.status) must_== Status.Ok
     }
 
     "Terminate redirect loop" in {
-      val resp = client(getUri(s"http://localhost:${addr.getPort}/redirectloop")).run
-      resp.status must_== Status.MovedPermanently
+      client(getUri(s"http://localhost:${addr.getPort}/redirectloop")).mapR(_.status) must_== Status.MovedPermanently
     }
 
     "Not redirect more than 'maxRedirects' iterations" in {
-      val resp = defaultClient(getUri(s"http://localhost:${addr.getPort}/redirect")).run
-      resp.status must_== Status.MovedPermanently
+      defaultClient(getUri(s"http://localhost:${addr.getPort}/redirect")).mapR(_.status) must_== Status.MovedPermanently
     }
   }
 

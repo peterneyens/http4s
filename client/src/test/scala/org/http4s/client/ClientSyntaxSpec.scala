@@ -53,24 +53,24 @@ class ClientSyntaxSpec extends Http4sSpec with MustThrownMatchers {
     }
 
     "use Status for Response matching and extraction" in {
-      client(req).map {
+      client(req).mapR {
         case Ok(resp) => "Ok"
         case _ => "fail"
       }.run must_== "Ok"
 
-      client(req).map {
+      client(req).mapR {
         case NotFound(resp) => "fail"
         case _ => "nomatch"
       }.run must_== "nomatch"
     }
 
     "use Status for Response matching and extraction" in {
-      client(req).flatMap {
+      client(req) {
         case Successful(resp) => resp.as[String]
         case _                => Task.now("fail")
       }.run must_== "hello"
 
-      client(req).map {
+      client(req).mapR {
         case ServerError(resp) => "fail"
         case _ => "nomatch"
       }.run must_== "nomatch"
@@ -94,18 +94,18 @@ class ClientSyntaxSpec extends Http4sSpec with MustThrownMatchers {
     }
 
     "prepAs must add Accept header" in {
-      client.prepAs(GET(uri("http://www.foo.com/echoheaders")))(EntityDecoder.text)
+      client(GET(uri("http://www.foo.com/echoheaders"))).as(EntityDecoder.text)
         .run must_== "Accept: text/*"
 
-      client.prepAs[String](GET(uri("http://www.foo.com/echoheaders")))
+      client(GET(uri("http://www.foo.com/echoheaders"))).as[String]
         .run must_== "Accept: text/*"
 
-      client.prepAs[String](uri("http://www.foo.com/echoheaders"))
+      client(uri("http://www.foo.com/echoheaders")).as[String]
         .run must_== "Accept: text/*"
 
       // Are we combining our mediatypes correctly? This is more of an EntityDecoder spec
       val edec = EntityDecoder.decodeBy(MediaType.`image/jpeg`)(_ => DecodeResult.success("foo!"))
-      client.prepAs(GET(uri("http://www.foo.com/echoheaders")))(EntityDecoder.text orElse edec)
+      client(GET(uri("http://www.foo.com/echoheaders"))).as(EntityDecoder.text orElse edec)
         .run must_== "Accept: text/*, image/jpeg"
     }
   }

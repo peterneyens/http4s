@@ -7,6 +7,8 @@ import org.http4s.Method._
 import org.http4s.headers.Location
 import org.http4s.server.HttpService
 
+import scalaz.concurrent.Task
+
 
 class FollowRedirectSpec extends Http4sSpec {
 
@@ -26,19 +28,18 @@ class FollowRedirectSpec extends Http4sSpec {
   
   "FollowRedirect" should {
     "Honor redirect" in {
-      val resp = client(getUri(s"http://localhost/redirect")).run
-      resp.status must_== Status.Ok
+      client(getUri(s"http://localhost/redirect")).mapR(_.status).run must_== Status.Ok
     }
 
     "Not redirect more than 'maxRedirects' iterations" in {
-      val resp = client(getUri(s"http://localhost/loop")).run
-      resp.status must_== Status.MovedPermanently
+      client(getUri(s"http://localhost/loop")).mapR(_.status).run must_== Status.MovedPermanently
     }
 
     "Use a GET method on redirect with 303 response code" in {
-      val resp = client(Request(method=POST, uri=getUri(s"http://localhost/303"))).run
-      resp.status must_== Status.Ok
-      resp.as[String].run must_== "hello"
+      client(Request(method=POST, uri=getUri(s"http://localhost/303"))) { resp => Task.now {
+        resp.status must_== Status.Ok
+        resp.as[String].run must_== "hello"
+      }}.run
     }
   }
 

@@ -3,6 +3,7 @@ package client
 package middleware
 
 import org.http4s._
+import org.http4s.client.Client.DisposableResponse
 
 import scalaz.concurrent.Task
 
@@ -17,13 +18,12 @@ object FollowRedirect {
       * @param req [[Request]] containing the headers, URI, etc.
       * @return Task which will generate the Response
       */
-    override def prepare(req: Request): Task[Response] = prepareLoop(req, 0)
+    override def open(req: Request): Task[DisposableResponse] = loop(req, 0)
 
-    private def prepareLoop(req: Request, redirects: Int): Task[Response] = {
-      val t = client.prepare(req)
-      t.flatMap { resp =>
+    private def loop(req: Request, redirects: Int): Task[DisposableResponse] = {
+      client.open(req).flatMap { case dr @ DisposableResponse(resp, dispose) =>
 
-        def doRedirect(method: Method): Task[Response] = {
+        def doRedirect(method: Method): Task[DisposableResponse] = {
           resp.headers.get(headers.Location) match {
             case Some(headers.Location(uri)) if redirects < maxRedirects =>
               // https://tools.ietf.org/html/rfc7231#section-7.1.2
@@ -33,12 +33,12 @@ object FollowRedirect {
                 fragment = uri.fragment orElse req.uri.fragment
               )
 
-              prepareLoop(
+              loop(
                 req.copy(method = method, uri = nextUri, body = EmptyBody),
                 redirects + 1
               )
 
-            case _ => Task.now(resp)
+            case _ => Task.now(dr)
           }
         }
 
@@ -49,7 +49,7 @@ object FollowRedirect {
           // Often the result of a Post request where the body has been properly consumed
           case 303 => doRedirect(Method.GET)
 
-          case _ => Task.now(resp)
+          case _ => Task.now(dr)
         }
       }
     }

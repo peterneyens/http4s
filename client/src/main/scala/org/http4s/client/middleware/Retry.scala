@@ -3,6 +3,7 @@ package client
 package middleware
 
 import org.http4s.Status.ResponseClass.Successful
+import org.http4s.client.Client.DisposableResponse
 import org.http4s.{Response, Request, EmptyBody}
 import org.http4s.client.Client
 import org.log4s.getLogger
@@ -21,19 +22,20 @@ object Retry {
 
     def shutdown(): Task[Unit] = client.shutdown()
 
-    def prepare(req: Request): Task[Response] = prepareLoop(req, 1)
+    def open(req: Request): Task[DisposableResponse] = loop(req, 1)
 
-    private def prepareLoop(req: Request, attempts: Int): Task[Response] = {
-      client.prepare(req) flatMap {
-        case Successful(resp) => Task.now(resp)
-        case fail => 
+    private def loop(req: Request, attempts: Int): Task[DisposableResponse] = {
+      client.open(req) flatMap {
+        case dr @ DisposableResponse(Successful(resp), _) =>
+          Task.now(dr)
+        case dr @ DisposableResponse(Response(fail, _, _, _, _), _) =>
           logger.info(s"Request ${req} has failed attempt ${attempts} with reason ${fail}")
-          backoff(attempts).fold(Task.now(fail))(dur => nextAttempt(req, attempts, dur))
+          backoff(attempts).fold(Task.now(dr))(dur => nextAttempt(req, attempts, dur))
       }
     }
 
-    private def nextAttempt(req: Request, attempts: Int, duration: FiniteDuration): Task[Response] =
-      Task.async { (prepareLoop(req.copy(body = EmptyBody), attempts + 1).get after duration).runAsync }
+    private def nextAttempt(req: Request, attempts: Int, duration: FiniteDuration): Task[DisposableResponse] =
+      Task.async { (loop(req.copy(body = EmptyBody), attempts + 1).get after duration).runAsync }
   }
 }
 

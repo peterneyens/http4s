@@ -33,7 +33,7 @@ object ClientExample {
     implicit val fooDecoder = jsonOf[Foo]
 
     // Match on response code!
-    val page2 = client(uri("http://http4s.org/resources/foo.json")).flatMap {
+    val page2 = client(uri("http://http4s.org/resources/foo.json")) {
       case Successful(resp) => resp.as[Foo].map("Received response: " + _)
       case NotFound(resp)   => Task.now("Not Found!!!")
       case resp             => Task.now("Failed: " + resp.status)

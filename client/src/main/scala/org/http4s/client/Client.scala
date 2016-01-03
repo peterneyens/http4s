@@ -1,84 +1,56 @@
 package org.http4s.client
 
 import org.http4s._
-import org.http4s.headers.Accept
+import org.http4s.client.Client.{DisposableResponse, Execution}
 
+import scalaz.EitherT
 import scalaz.concurrent.Task
+import scalaz.stream.Process.eval_
+
+object Client {
+  case class DisposableResponse(response: Response, dispose: Task[Unit])
+
+  class Execution private[Client] (val _acquire: Task[DisposableResponse]) extends AnyVal {
+    final def stream: Task[Response] =
+      _acquire.map { case DisposableResponse(response, dispose) =>
+        response.copy(body = response.body ++ eval_(dispose))
+      }
+
+    final def apply[A](f: Response => Task[A]): Task[A] =
+      _acquire.flatMap { case DisposableResponse(response, dispose) =>
+        f(response).onFinish(_ => dispose)
+      }
+
+    final def as[A](implicit decoder: EntityDecoder[A]): Task[A] =
+      apply(_.as[A])
+
+    final def attemptAs[A](implicit decoder: EntityDecoder[A]): DecodeResult[A] =
+      EitherT.eitherT {
+        _acquire.flatMap { case DisposableResponse(response, dispose) =>
+          response.attemptAs[A].run.onFinish(_ => dispose)
+        }
+      }
+
+    final def mapR[A](f: Response => A): Task[A] =
+      apply(f andThen Task.now)
+
+    final def void: Task[Unit] =
+      mapR(_ => ())
+  }
+}
 
 trait Client {
-
   /** Shutdown this client, closing any open connections and freeing resources */
   def shutdown(): Task[Unit]
 
-  /** Prepare a single request
-    * @param req [[Request]] containing the headers, URI, etc.
-    * @return Task which will generate the Response
-    */
-  def prepare(req: Request): Task[Response]
+  def open(req: Request): Task[DisposableResponse]
 
-  /** Prepare a single request
-    * @param req [[Request]] containing the headers, URI, etc.
-    * @return Task which will generate the Response
-    */
-  final def apply(req: Request): Task[Response] = prepare(req)
+  final def apply(req: Request): Execution =
+    new Execution(open(req))
 
-  /** Prepare a single request
-    * @param req [[Request]] containing the headers, URI, etc.
-    * @return Task which will generate the Response
-    */
-  final def prepAs[T](req: Request)(implicit d: EntityDecoder[T]): Task[T] = {
-    val r = if (d.consumes.nonEmpty) {
-      val m = d.consumes.toList
-      req.putHeaders(Accept(m.head, m.tail:_*))
-    } else req
+  final def apply(uri: Uri): Execution =
+    apply(Request(Method.GET, uri))
 
-    prepare(r).flatMap { resp =>
-      d.decode(resp, strict = true).fold(e => throw DecodeFailureException(e), identity)
-    }
-  }
-
-  /////////////////////////////////////////////////////////////////////////
-
-  /** Prepare a single GET request
-    * @param req [[Uri]] of the request
-    * @return Task which will generate the Response
-    */
-  final def prepare(req: Uri): Task[Response] =
-    prepare(Request(uri = req))
-
-  /** Prepare a single GET request
-    * @param req [[Uri]] of the request
-    * @return Task which will generate the Response
-    */
-  final def apply(req: Uri): Task[Response] = prepare(req)
-
-  /** Prepare a single GET request
-    * @param req [[Uri]] of the request
-    * @return Task which will generate the Response
-    */
-  final def prepAs[T](req: Uri)(implicit d: EntityDecoder[T]): Task[T] =
-    prepAs(Request(uri = req))(d)
-
-  /////////////////////////////////////////////////////////////////////////
-
-  /** Prepare a single request
-    * @param req `Task[Request]` containing the headers, URI, etc
-    * @return Task which will generate the Response
-    */
-  final def prepare(req: Task[Request]): Task[Response] =
-    req.flatMap(prepare)
-
-  /** Prepare a single request
-    * @param req `Task[Request]` containing the headers, URI, etc
-    * @return Task which will generate the Response
-    */
-  final def apply(req: Task[Request]): Task[Response] =
-    prepare(req)
-
-  /** Prepare a single request
-    * @param req `Task[Request]` containing the headers, URI, etc
-    * @return Task which will generate the Response
-    */
-  final def prepAs[T](req: Task[Request])(implicit d: EntityDecoder[T]): Task[T] =
-    req.flatMap(prepAs(_)(d))
+  final def apply(req: Task[Request]): Execution =
+    new Execution(req.flatMap(open))
 }
