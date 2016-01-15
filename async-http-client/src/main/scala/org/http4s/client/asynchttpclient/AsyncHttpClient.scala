@@ -2,8 +2,11 @@ package org.http4s
 package client
 package asynchttpclient
 
+import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicLong
+
 import org.asynchttpclient.AsyncHandler.State
-import org.asynchttpclient.request.body.generator.{InputStreamBodyGenerator, BodyGenerator}
+import org.asynchttpclient.request.body.generator._
 import org.asynchttpclient.{Request => AsyncRequest, Response => _, _}
 import org.asynchttpclient.handler.StreamedAsyncHandler
 
@@ -11,10 +14,12 @@ import org.http4s.util.task
 import org.reactivestreams.{Subscription, Subscriber, Publisher}
 import scodec.bits.ByteVector
 
+import scala.annotation.tailrec
 import scala.collection.JavaConverters._
+import scalaz.stream.Cause.{EarlyCause, End, Kill}
+import scalaz.stream.Process.{Await, Step, Emit, Halt}
 
-import scalaz.stream.io._
-import scalaz.stream.async
+import scalaz.stream.{Cause, async, Process}
 import scalaz.concurrent.Task
 
 import scala.concurrent.Promise
@@ -120,8 +125,77 @@ object AsyncHttpClient {
       ).setBody(getBodyGenerator(request.body))
       .build()
 
-  private def getBodyGenerator(body: EntityBody): BodyGenerator =
-    new InputStreamBodyGenerator(toInputStream(body))
+  private def getBodyGenerator(body: EntityBody): BodyGenerator = {
+    var cur = body
+    val requests = new AtomicLong()
+    val publisher = new Publisher[ByteBuffer] {
+      override def subscribe(s: Subscriber[_ >: ByteBuffer]): Unit = {
+        s.onSubscribe(new Subscription {
+          override def cancel(): Unit = {
+            requests.set(0)
+          }
+
+          override def request(n: Long): Unit = {
+            requests.addAndGet(n) > 0
+            step(s)
+          }
+        })
+      }
+
+      // Based on scalaz.stream.io.toInputStream
+      @tailrec
+      def step(subscriber: Subscriber[_ >: ByteBuffer]): Unit = {
+        cur.step match {
+          case h@Halt(End | Kill) =>
+            cur = h
+            subscriber.onComplete()
+
+          case h@Halt(Cause.Error(e)) =>
+            cur = h
+            subscriber.onError(e)
+
+          case Step(Emit(as), cont) =>
+            @tailrec
+            def loop(chunks: List[ByteVector]): Boolean = {
+              chunks match {
+                case chunk :: tail if requests.get > 0 =>
+                  val pending = requests.get()
+                  if (pending > 0) {
+                    if (requests.compareAndSet(pending, pending - 1)) {
+                      subscriber.onNext(ByteBuffer.wrap(chunk.toArray))
+                      loop(tail)
+                    }
+                    else {
+                      loop(chunks)
+                    }
+                  }
+                  else {
+                    cur = Emit(chunks) ++ cont.continue
+                    false
+                  }
+                case Nil =>
+                  cur = cont.continue
+                  true
+              }
+            }
+            if (loop(as.toList))
+              step(subscriber)
+
+          case Step(Await(request, receive, _), cont) => { // todo: ??? Cleanup
+            // yay! run the Task
+            cur =
+              try receive(EarlyCause.fromTaskResult(request.attempt.run)).run +: cont
+              catch {
+                case e: Throwable =>
+                  Process.fail(e)
+              }
+            step(subscriber) // push things onto the stack and then step further (tail recursively)
+          }
+        }
+      }
+    }
+    new ReactiveStreamsBodyGenerator(publisher)
+  }
 
   private def getStatus(status: HttpResponseStatus): Status =
     Status.fromInt(status.getStatusCode).valueOr(e => throw new ParseException(e))
