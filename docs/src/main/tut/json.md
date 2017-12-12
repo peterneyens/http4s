@@ -83,7 +83,7 @@ Ok(greeting).unsafeRunSync
 ```
 
 To encode a Scala value of type `A` into an entity, we need an
-`EntityEncoder[A]` in scope.  The http4s-circe module includes a
+`EntityEncoder[F, A]` in scope.  The http4s-circe module includes a
 `org.http4s.circe` object, which gives us exactly this for an
 `io.circe.Json` value:
 
@@ -164,7 +164,7 @@ Just as we needed an `EntityEncoder[JSON]` to send JSON from a server
 or client, we need an `EntityDecoder[JSON]` to receive it.
 
 The `org.http4s.circe._` package provides an implicit
-`EntityDecoder[Json]`.  This makes it very easy to decode a request or
+`EntityDecoder[F, Json]`.  This makes it very easy to decode a request or
 response body to JSON using the [`as` syntax]:
 
 ```tut:book
@@ -177,11 +177,11 @@ want to get to a typed model as quickly as we can.
 
 ## Decoding JSON to a case class
 
-To get from an HTTP entity to `Json`, we use an `EntityDecoder[Json]`.
+To get from an HTTP entity to `Json`, we use an `EntityDecoder[F, Json]`.
 To get from `Json` to any type `A`, we need an `io.circe.Decoder[A]`.
 http4s-circe provides the `jsonOf` function to make the connection all
-the way from HTTP to your type `A`.  Specifically, `jsonOf[A]` takes
-an implicit `Decoder[A]` and makes a `EntityDecoder[A]`:
+the way from HTTP to your type `A`.  Specifically, `jsonOf[IO, A]` takes
+an implicit `Decoder[A]` and makes a `EntityDecoder[IO, A]`:
 
 ```tut:book
 implicit val userDecoder = jsonOf[IO, User]
