@@ -16,6 +16,7 @@
 
 package org.http4s.ember.core.h2
 
+import cats.data.Chain
 import cats.data.NonEmptyList
 import cats.effect.Deferred
 import cats.effect.IO
@@ -183,7 +184,7 @@ class H2StreamSuite extends Http4sSuite {
       source = fs2.Stream.repeatEval(IO(42.toByte)).take(10000).chunkN(100)
       actual <- Queue.unbounded[IO, Chunk[Byte]]
 
-      _ <- stream.receiveHeaders(init)
+      _ <- stream.receiveHeaders(init, Chain.empty)
       _ <- assertIO(stream.state.get.map(_.state), H2Stream.StreamState.Open)
       _ <- (
         // Taken from `sendMessageBody` to emulate messages sent from server.
@@ -198,7 +199,7 @@ class H2StreamSuite extends Http4sSuite {
           .drain >>
           // Taken from `sendTrailerHeaders` to emulate trailers headers sent from server.
           stream
-            .receiveHeaders(trailers)
+            .receiveHeaders(trailers, Chain.empty)
       )
         // Note: Without closing `readBuffer` on headers with `endStream=true`, `readBody` hangs forever.
         .both(stream.readBody.compile.drain)

@@ -24,6 +24,7 @@ import scala.annotation.switch
 
 private[ember] sealed abstract class H2Frame {
   def toRaw: H2Frame.RawFrame
+  private[h2] def tag: Byte
 }
 
 @nowarn("msg=implicit numeric widening")
@@ -142,6 +143,7 @@ private[ember] object H2Frame {
 
   final case class Unknown(raw: RawFrame) extends H2Frame {
     def toRaw: RawFrame = raw
+    private[h2] def tag: Byte = raw.`type`
   }
 
   /*
@@ -163,6 +165,7 @@ private[ember] object H2Frame {
       s"Data(identifier=$identifier, data=$data, pad=$pad, endStream=$endStream)"
 
     def toRaw: RawFrame = Data.toRaw(this)
+    private[h2] def tag: Byte = Data.`type`
   }
   object Data {
     final val `type` = 0x0
@@ -235,6 +238,7 @@ private[ember] object H2Frame {
     override def toString: String =
       s"Headers(identifier=$identifier, dependency=$dependency, endStream=$endStream, endHeaders=$endHeaders, headerBlock=$headerBlock, padding=$padding)"
     def toRaw: RawFrame = Headers.toRaw(this)
+    private[h2] def tag: Byte = Headers.`type`
   }
   object Headers {
     final val `type` = 0x1
@@ -375,9 +379,11 @@ private[ember] object H2Frame {
       weight: Byte,
   ) extends H2Frame {
     def toRaw: RawFrame = Priority.toRaw(this)
+    private[h2] def tag: Byte = Priority.`type`
   }
   object Priority {
     final val `type` = 0x2
+
     def fromRaw(raw: RawFrame): Either[H2Error, Priority] =
       if (raw.`type` == `type`) {
         if (raw.length === 5) {
@@ -419,6 +425,7 @@ private[ember] object H2Frame {
     override def toString: String =
       s"RstStream(identifier=$identifier, value=${H2Error.fromInt(value).getOrElse(value)})"
     def toRaw: RawFrame = RstStream.toRaw(this)
+    private[h2] def tag: Byte = RstStream.`type`
   }
   object RstStream {
     final val `type` = 0x3
@@ -453,6 +460,7 @@ private[ember] object H2Frame {
       else if (identifier == 0 && !ack) s"Settings(${list.map(_.toString).intercalate(", ")})"
       else s"Settings(identifier=$identifier, ack=$ack, list=$list)"
     def toRaw: RawFrame = Settings.toRaw(this)
+    private[h2] def tag: Byte = Settings.`type`
   }
   object Settings {
     final val `type` = 0x4
@@ -656,6 +664,7 @@ private[ember] object H2Frame {
       padding: Option[ByteVector],
   ) extends H2Frame {
     def toRaw: RawFrame = PushPromise.toRaw(this)
+    private[h2] def tag: Byte = PushPromise.`type`
   }
   object PushPromise {
     final val `type` = 0x5
@@ -733,6 +742,7 @@ private[ember] object H2Frame {
       else if (identifier == 0 && !ack) "Ping"
       else s"Ping(identifier=$identifier, ack=$ack, data=$data)"
     def toRaw: RawFrame = Ping.toRaw(this)
+    private[h2] def tag: Byte = Ping.`type`
   } // Always exactly 8 bytes
   object Ping {
     final val `type` = 0x6
@@ -775,6 +785,7 @@ private[ember] object H2Frame {
     override def toString: String =
       s"GoAway(identifier=$identifier, lastStreamId=$lastStreamId, errorCode=${H2Error.fromInt(errorCode).getOrElse(errorCode)}, additionalDebugData=$additionalDebugData)"
     def toRaw: RawFrame = GoAway.toRaw(this)
+    private[h2] def tag: Byte = GoAway.`type`
   }
   object GoAway {
     final val `type` = 0x7
@@ -832,6 +843,7 @@ private[ember] object H2Frame {
    */
   final case class WindowUpdate(identifier: Int, windowSizeIncrement: Int) extends H2Frame {
     def toRaw: RawFrame = WindowUpdate.toRaw(this)
+    private[h2] def tag: Byte = WindowUpdate.`type`
   }
   object WindowUpdate {
     final val `type` = 0x8
@@ -876,6 +888,7 @@ private[ember] object H2Frame {
     override def toString: String =
       s"Continuation(identifier=$identifier, endHeader=$endHeaders, headerBlockFragment=$headerBlockFragment)"
     def toRaw: RawFrame = Continuation.toRaw(this)
+    private[h2] def tag: Byte = Continuation.`type`
   }
   object Continuation {
     final val `type` = 0x9
