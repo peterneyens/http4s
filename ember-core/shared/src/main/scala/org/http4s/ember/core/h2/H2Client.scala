@@ -18,6 +18,7 @@ package org.http4s.ember.core.h2
 
 import cats._
 import cats.effect._
+import cats.effect.std.MapRef
 import cats.effect.syntax.all._
 import cats.syntax.all._
 import com.comcast.ip4s._
@@ -73,10 +74,7 @@ private[ember] class H2Client[F[_]](
     unix: Option[UnixSockets[F]],
     localSettings: H2Frame.Settings.ConnectionSettings,
     tls: TLSContext[F],
-    connections: Ref[
-      F,
-      Map[H2Client.RequestKey, (H2Connection[F], F[Unit])],
-    ],
+    connections: MapRef[F, H2Client.RequestKey, Option[(H2Connection[F], F[Unit])]],
     onPushPromise: (
         org.http4s.Request[fs2.Pure],
         F[org.http4s.Response[F]],
@@ -93,32 +91,24 @@ private[ember] class H2Client[F[_]](
       enableEndpointValidation: Boolean,
       enableServerNameIndication: Boolean,
   ): F[H2Connection[F]] =
-    connections.get.map(_.get(key).map(_._1)).flatMap {
-      case Some(connection) => Applicative[F].pure(connection)
+    connections(key).get.flatMap {
+      case Some((connection, _)) => Applicative[F].pure(connection)
       case None =>
+        // store state for creation?
         createConnection(
           key,
           useTLS,
           priorKnowledge,
           enableEndpointValidation,
           enableServerNameIndication,
-        ).allocated.flatMap(tup =>
-          connections
-            .modify { map =>
-              val current = map.get(key)
-              val newMap = current.fold(map.+((key, tup)))(_ => map)
-              val out = current.fold(
-                Either.left[H2Connection[F], (H2Connection[F], F[Unit])](tup._1)
-              )(r => Either.right((r._1, tup._2)))
-              (newMap, out)
-            }
-            .flatMap {
-              case Right((connection, shutdown)) =>
-                shutdown.map(_ => connection)
-              case Left(connection) =>
-                connection.pure[F]
-            }
-        )
+        ).allocated.flatMap { case tup @ (connection, shutdown) =>
+          connections(key).flatModify {
+            case None =>
+              (Some(tup), connection.pure[F])
+            case Some(current @ (connection, _)) =>
+              (Some(current), shutdown.as(connection))
+          }
+        }
     }
 
   //
@@ -197,7 +187,7 @@ private[ember] class H2Client[F[_]](
       for {
         socketAdd <- RequestKey.getAddress(key)
         _ <- socket.write(Chunk.byteVector(Preface.clientBV))
-        ref <- Concurrent[F].ref(Map[Int, H2Stream[F]]())
+        ref <- Concurrent[F].ref(Map[Int, H2Stream[F]]()) // IntMap?
         stateRef <- H2Connection.initState[F](
           defaultSettings,
           defaultSettings.initialWindowSize,
@@ -343,23 +333,33 @@ private[ember] object H2Client {
       } { ref =>
         ref.get.flatMap(_.toList.traverse_ { case (_, (_, s)) => s }.attempt.void)
       }
+      mapRefH2 = MapRef.fromSingleImmutableMapRef(mapH2)
       socketMap <- Resource.eval(
         Concurrent[F].ref(Map[H2Client.RequestKey, SocketType]())
       )
 
+      // notify of closed
       _ <- Stream
         .awakeDelay(1.seconds)
         .evalMap(_ => mapH2.get)
         .flatMap(m => Stream.emits(m.toList))
-        .evalMap { case (t, (connection, shutdown)) =>
+        .foreach { case (t, (connection, shutdown)) =>
           connection.state.get.flatMap { s =>
-            if (s.closed) mapH2.update(m => m - t) >> shutdown else Applicative[F].unit
-          }.attempt
+            if (s.closed) mapH2.update(_ - t) >> shutdown else Applicative[F].unit
+          }.voidError
         }
         .compile
         .drain
         .background
-      h2 = new H2Client(Network[F], unixSockets, settings, tlsContext, mapH2, onPushPromise, logger)
+      h2 = new H2Client(
+        Network[F],
+        unixSockets,
+        settings,
+        tlsContext,
+        mapRefH2,
+        onPushPromise,
+        logger,
+      )
     } yield (http1Client: TinyClient[F]) => { (req: Request[F]) =>
       val key = H2Client.RequestKey.fromRequest(req)
       val priorKnowledge = req.attributes.contains(Http2PriorKnowledge)
