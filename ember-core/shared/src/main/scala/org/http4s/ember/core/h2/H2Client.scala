@@ -187,7 +187,7 @@ private[ember] class H2Client[F[_]](
       for {
         socketAdd <- RequestKey.getAddress(key)
         _ <- socket.write(Chunk.byteVector(Preface.clientBV))
-        ref <- Concurrent[F].ref(Map[Int, H2Stream[F]]()) // IntMap?
+        ref <- Concurrent[F].ref(Map[Int, H2Stream[F]]())
         stateRef <- H2Connection.initState[F](
           defaultSettings,
           defaultSettings.initialWindowSize,
@@ -218,19 +218,19 @@ private[ember] class H2Client[F[_]](
       )
 
     def clearClosed(h2: H2Connection[F]): F[Unit] =
-      Stream
-        .fromQueueUnterminated(h2.closedStreams)
-        .repeat
-        .foreach(i => if (i % 2 != 0) h2.mapRef.update(m => m - i) else F.unit)
+      h2.getClosedStreams.repeat
+        .foreach(i => if (i % 2 != 0) h2.removeStream(i) else F.unit)
         .compile
         .drain
 
     def pullCreatedStreams(h2: H2Connection[F]): F[Unit] = {
       def processStream(i: Int): F[Unit] =
         (for {
-          stream <- h2.mapRef.get.flatMap { streamMap =>
-            streamMap.get(i).liftTo(new ProtocolException("Stream missing for push promise"))
-          } // FOLD
+          stream <- h2
+            .getStream(i)
+            .flatMap(
+              _.liftTo(new ProtocolException("Stream missing for push promise"))
+            )
           // _ <- Sync[F].delay(println(s"Push promise stream acquired for $i"))
           req <- stream.getRequest
           resp = stream.getResponse.map(_.covary[F].withBodyStream(stream.readBody))
@@ -240,16 +240,13 @@ private[ember] class H2Client[F[_]](
             case Outcome.Errored(_) => stream.rstStream(H2Error.RefusedStream)
             case Outcome.Succeeded(f) => f
           }.attempt
-          _ <- h2.mapRef.update(_ - i)
+          _ <- h2.removeStream(i) // guarantee?
           out <- outE.liftTo[F]
         } yield out)
-          .onError { case e => logger.warn(e)(s"Error Handling Push Promise") }
-          .attempt
-          .void
+          .handleErrorWith(e => logger.warn(e)(s"Error Handling Push Promise"))
 
-      Stream
-        .fromQueueUnterminated(h2.createdStreams)
-        .parEvalMap(10)(i => if (i % 2 == 0) processStream(i) else F.unit)
+      h2.getCreatedStreams
+        .parEvalMapUnordered(10)(i => if (i % 2 == 0) processStream(i) else F.unit)
         .compile
         .drain
         .onError { case e => logger.info(e)(s"Server Connection Processing Halted") } // Idle etc.
@@ -257,7 +254,7 @@ private[ember] class H2Client[F[_]](
 
     def processSettings(h2: H2Connection[F]): F[Unit] = {
       val localSetts = H2Frame.Settings.ConnectionSettings.toSettings(localSettings)
-      h2.outgoing.offer(Chunk.singleton(localSetts))
+      h2.sendOutgoingFrame(localSetts)
     }
 
     for {
@@ -299,12 +296,10 @@ private[ember] class H2Client[F[_]](
       )
       // Stream Order Must Be Correct, so we must grab the global lock
       stream <- Resource.make(
-        connection.streamCreateAndHeaders.use(_ =>
-          connection.initiateLocalStream.flatMap(stream =>
-            stream.sendHeaders(PseudoHeaders.requestToHeaders(req), endStream = false).as(stream)
-          )
+        connection.createLocalStream.use(stream =>
+          stream.sendHeaders(PseudoHeaders.requestToHeaders(req), endStream = false).as(stream)
         )
-      )(stream => connection.mapRef.update(m => m - stream.id))
+      )(stream => connection.removeStream(stream.id))
       _ <- (stream.sendMessageBody(req) >> stream.sendTrailerHeaders(req)).background
       resp <- Resource.eval(stream.getResponse).map(_.covary[F].withBodyStream(stream.readBody))
     } yield resp
@@ -331,7 +326,7 @@ private[ember] object H2Client {
           Map[H2Client.RequestKey, (H2Connection[F], F[Unit])]()
         )
       } { ref =>
-        ref.get.flatMap(_.toList.traverse_ { case (_, (_, s)) => s }.attempt.void)
+        ref.get.flatMap(_.toList.traverse_ { case (_, (_, s)) => s }.voidError)
       }
       mapRefH2 = MapRef.fromSingleImmutableMapRef(mapH2)
       socketMap <- Resource.eval(
@@ -344,8 +339,8 @@ private[ember] object H2Client {
         .evalMap(_ => mapH2.get)
         .flatMap(m => Stream.emits(m.toList))
         .foreach { case (t, (connection, shutdown)) =>
-          connection.state.get.flatMap { s =>
-            if (s.closed) mapH2.update(_ - t) >> shutdown else Applicative[F].unit
+          connection.isClosed.flatMap { closed =>
+            if (closed) mapH2.update(_ - t) >> shutdown else Applicative[F].unit
           }.voidError
         }
         .compile

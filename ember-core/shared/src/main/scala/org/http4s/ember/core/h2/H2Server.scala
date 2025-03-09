@@ -180,7 +180,9 @@ private[ember] object H2Server {
     // h2c Initial Request Communication on h2c Upgrade
     def sendInitialRequest(h2: H2Connection[F])(req: Request[Pure]): F[Unit] =
       for {
-        h2Stream <- h2.initiateRemoteStreamById(1)
+        h2Stream <- h2.initiateRemoteStreamById(
+          1
+        ) // createRemoteStream ? but would offer immediately
         s <- h2Stream.state.modify { s =>
           val x = s.copy(state = H2Stream.StreamState.HalfClosedRemote)
           (x, x)
@@ -191,8 +193,8 @@ private[ember] object H2Server {
         _ <- s.writeBlock.complete(Either.unit)
       } yield ()
 
-    def holdWhileOpen(stateRef: Ref[F, H2Connection.State[F]]): F[Unit] =
-      F.sleep(1.seconds) >> stateRef.get.map(_.closed).ifM(F.unit, holdWhileOpen(stateRef))
+    def holdWhileOpen(isClosed: F[Boolean]): F[Unit] =
+      F.sleep(1.seconds) >> isClosed.ifM(F.unit, holdWhileOpen(isClosed))
 
     def initH2Connection: F[H2Connection[F]] = for {
       address <- socket.remoteAddress.attempt.map(
@@ -230,16 +232,14 @@ private[ember] object H2Server {
     )
 
     def clearClosedStreams(h2: H2Connection[F]): F[Unit] =
-      Stream
-        .fromQueueUnterminated(h2.closedStreams)
-        .map(i =>
-          Stream.eval(
-            // Max Time After Close We Will Still Accept Messages
-            (Temporal[F].sleep(1.seconds) >>
-              h2.mapRef.update(m => m - i)).timeout(15.seconds).attempt.start
-          )
+      h2.getClosedStreams
+        .parEvalMapUnordered(localSettings.maxConcurrentStreams.maxConcurrency)(i =>
+          // Max Time After Close We Will Still Accept Messages
+          (Temporal[F].sleep(1.seconds) >> h2.removeStream(i))
+            .timeout(15.seconds)
+            .attempt
+            .start // Peter: if we start, this could be a foreach?
         )
-        .parJoin(localSettings.maxConcurrentStreams.maxConcurrency)
         .compile
         .drain
 
@@ -249,12 +249,10 @@ private[ember] object H2Server {
     ): F[Unit] = {
       def fulfillPushPromises(resp: Response[F]): F[Unit] = {
         def sender(req: Request[Pure]): F[(Request[Pure], H2Stream[F])] =
-          h2.streamCreateAndHeaders.use[(Request[Pure], H2Stream[F])](_ =>
-            h2.initiateLocalStream.flatMap { stream =>
-              stream
-                .sendPushPromise(streamIx, PseudoHeaders.requestToHeaders(req))
-                .map(_ => (req, stream))
-            }
+          h2.createLocalStream.use[(Request[Pure], H2Stream[F])](stream =>
+            stream
+              .sendPushPromise(streamIx, PseudoHeaders.requestToHeaders(req))
+              .map(_ => (req, stream))
           )
 
         def sendData(resp: Response[F], stream: H2Stream[F]): F[Unit] =
@@ -284,7 +282,9 @@ private[ember] object H2Server {
       }
 
       for {
-        stream <- h2.mapRef.get.map(_.get(streamIx)).map(_.get) // FOLD
+        stream <- h2
+          .getStream(streamIx)
+          .flatMap(_.liftTo[F](new RuntimeException("missing created stream")))
         req <- stream.getRequest.map(_.covary[F].withBodyStream(stream.readBody))
         resp <- httpApp(req)
         _ <- stream.sendHeaders(PseudoHeaders.responseToHeaders(resp), endStream = false)
@@ -295,8 +295,7 @@ private[ember] object H2Server {
     }
 
     def processCreatedStreams(h2: H2Connection[F]): F[Unit] =
-      Stream
-        .fromQueueUnterminated(h2.createdStreams)
+      h2.getCreatedStreams
         .parEvalMapUnordered(localSettings.maxConcurrentStreams.maxConcurrency)(i =>
           processCreatedStream(h2, i)
             .handleErrorWith(e => logger.error(e)(s"Error while processing stream"))
@@ -310,7 +309,7 @@ private[ember] object H2Server {
     for {
       h2 <- Resource.eval(initH2Connection)
       _ <- h2.writeLoop.compile.drain.background
-      _ <- Resource.eval(h2.outgoing.offer(Chunk.singleton(settingsFrame)))
+      _ <- Resource.eval(h2.sendOutgoingFrame(settingsFrame))
       _ <- h2.readLoop.background
       // h2c Initial Request Communication on h2c Upgrade
       _ <- Resource.eval(
@@ -321,7 +320,7 @@ private[ember] object H2Server {
       _ <- Resource.eval(
         h2.state.update(s => s.copy(writeWindow = s.remoteSettings.initialWindowSize.windowSize))
       )
-      _ <- Resource.eval(holdWhileOpen(h2.state))
+      _ <- Resource.eval(holdWhileOpen(h2.isClosed))
     } yield ()
   }
 }
