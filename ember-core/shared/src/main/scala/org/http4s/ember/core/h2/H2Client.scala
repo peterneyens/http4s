@@ -94,7 +94,6 @@ private[ember] class H2Client[F[_]](
     connections(key).get.flatMap {
       case Some((connection, _)) => Applicative[F].pure(connection)
       case None =>
-        // store state for creation?
         createConnection(
           key,
           useTLS,
@@ -187,35 +186,17 @@ private[ember] class H2Client[F[_]](
       for {
         socketAdd <- RequestKey.getAddress(key)
         _ <- socket.write(Chunk.byteVector(Preface.clientBV))
-        ref <- Concurrent[F].ref(Map[Int, H2Stream[F]]())
-        stateRef <- H2Connection.initState[F](
-          defaultSettings,
-          defaultSettings.initialWindowSize,
-          localSettings.initialWindowSize,
+        connection <- H2Connection.init[F](
+          address = socketAdd,
+          connectionType = H2Connection.ConnectionType.Client,
+          localSettings = localSettings,
+          remoteSettings = defaultSettings,
+          writeWindow = defaultSettings.initialWindowSize,
+          readWindow = localSettings.initialWindowSize,
+          socket = socket,
+          logger = logger,
         )
-        queue <- cats.effect.std.Queue.unbounded[F, Chunk[H2Frame]] // TODO revisit
-        hpack <- Hpack.create[F]
-        settingsAck <- Deferred[F, Either[Throwable, H2Frame.Settings.ConnectionSettings]]
-        streamCreationLock <- cats.effect.std.Semaphore[F](1)
-        // data <- Resource.eval(cats.effect.std.Queue.unbounded[F, Frame.Data])
-        created <- cats.effect.std.Queue.unbounded[F, Int]
-        closed <- cats.effect.std.Queue.unbounded[F, Int]
-      } yield new H2Connection(
-        socketAdd,
-        H2Connection.ConnectionType.Client,
-        localSettings,
-        ref,
-        stateRef,
-        queue,
-        created,
-        closed,
-        hpack,
-        streamCreationLock.permit,
-        settingsAck,
-        acc,
-        socket,
-        logger,
-      )
+      } yield connection
 
     def clearClosed(h2: H2Connection[F]): F[Unit] =
       h2.getClosedStreams.repeat
@@ -259,7 +240,7 @@ private[ember] class H2Client[F[_]](
 
     for {
       h2 <- Resource.eval(createH2Connection)
-      _ <- h2.readLoop.background
+      _ <- h2.readLoop(acc).background
       _ <- h2.writeLoop.compile.drain.background
       _ <- clearClosed(h2).background
       _ <- pullCreatedStreams(h2).background

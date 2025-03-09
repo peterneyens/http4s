@@ -20,6 +20,7 @@ import cats._
 import cats.data.Chain
 import cats.effect._
 import cats.effect.kernel.Outcome
+import cats.effect.std.Mutex
 import cats.syntax.all._
 import com.comcast.ip4s.Host
 import com.comcast.ip4s.SocketAddress
@@ -49,7 +50,6 @@ private[h2] class H2Connection[F[_]](
     streamCreateAndHeaders: Resource[F, Unit],
     // Peter: connection completes, but nothing gets?
     settingsAck: Deferred[F, Either[Throwable, H2Frame.Settings.ConnectionSettings]],
-    acc: ByteVector, // Any Bytes Already Read
     socket: Socket[F],
     logger: Logger[F],
 )(implicit F: Temporal[F]) {
@@ -167,7 +167,7 @@ private[h2] class H2Connection[F[_]](
   // TODO Split Frames between Data and Others Hold Data If we are at cap
   //  Currently will backpressure at the data frame till its cleared
 
-  def readLoop: F[Unit] = {
+  def readLoop(alreadyRead: ByteVector): F[Unit] = {
     def connectionTerminated: String = s"Connection $addrStr readLoop Terminated"
     val readFromSocket: F[Option[Chunk[Byte]]] =
       socket.read(localSettings.initialWindowSize.windowSize)
@@ -485,7 +485,7 @@ private[h2] class H2Connection[F[_]](
         case None => F.unit
       }
 
-    F.guaranteeCase(readLoopAux(acc, Stateless)) {
+    F.guaranteeCase(readLoopAux(alreadyRead, Stateless)) {
       case Outcome.Errored(H2Connection.KillWithoutMessage()) =>
         logger.debug(s"ReadLoop has received that is should kill") >>
           close
@@ -549,7 +549,7 @@ private[h2] object H2Connection {
       closed: Boolean,
   )
 
-  def initState[F[_]](
+  private def initState[F[_]](
       remoteSettings: H2Frame.Settings.ConnectionSettings,
       writeWindow: SettingsInitialWindowSize,
       readWindow: SettingsInitialWindowSize,
@@ -566,6 +566,41 @@ private[h2] object H2Connection {
       )
       F.ref(state)
     }
+
+  def init[F[_]: Async](
+      address: Either[UnixSocketAddress, SocketAddress[Host]],
+      connectionType: H2Connection.ConnectionType,
+      localSettings: H2Frame.Settings.ConnectionSettings,
+      remoteSettings: H2Frame.Settings.ConnectionSettings,
+      writeWindow: SettingsInitialWindowSize,
+      readWindow: SettingsInitialWindowSize,
+      socket: Socket[F],
+      logger: Logger[F],
+  ): F[H2Connection[F]] = for {
+    ref <- Concurrent[F].ref(Map[Int, H2Stream[F]]())
+    stateRef <- H2Connection.initState[F](remoteSettings, writeWindow, readWindow)
+    queue <- cats.effect.std.Queue.unbounded[F, Chunk[H2Frame]] // TODO revisit
+    hpack <- Hpack.create[F]
+    settingsAck <- Deferred[F, Either[Throwable, H2Frame.Settings.ConnectionSettings]]
+    streamCreationLock <- Mutex[F]
+    // data <- Resource.eval(cats.effect.std.Queue.unbounded[F, Frame.Data])
+    created <- cats.effect.std.Queue.unbounded[F, Int]
+    closed <- cats.effect.std.Queue.unbounded[F, Int]
+  } yield new H2Connection(
+    address,
+    connectionType,
+    localSettings,
+    ref,
+    stateRef,
+    queue,
+    created,
+    closed,
+    hpack,
+    streamCreationLock.lock,
+    settingsAck,
+    socket,
+    logger,
+  )
 
   final case class KillWithoutMessage()
       extends RuntimeException
