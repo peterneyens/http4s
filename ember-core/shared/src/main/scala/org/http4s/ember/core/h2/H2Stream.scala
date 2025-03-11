@@ -182,7 +182,10 @@ private[h2] class H2Stream[F[_]: Concurrent](
     }
   }
 
-  def receiveHeaders(headers: H2Frame.Headers, continuations: H2Frame.Continuation*): F[Unit] = {
+  def receiveHeaders(
+      headers: H2Frame.Headers,
+      continuations: Chain[H2Frame.Continuation],
+  ): F[Unit] = {
 
     def checkLengthOf(mess: Message[Pure]): F[Unit] =
       mess.contentLength.traverse_ { length =>
@@ -271,7 +274,7 @@ private[h2] class H2Stream[F[_]: Concurrent](
 
   def receivePushPromise(
       headers: H2Frame.PushPromise,
-      continuations: H2Frame.Continuation*
+      continuations: Chain[H2Frame.Continuation],
   ): F[Unit] = state.get.flatMap { s =>
     connectionType match {
       case H2Connection.ConnectionType.Client =>
